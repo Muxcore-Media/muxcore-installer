@@ -1,0 +1,52 @@
+# publish-policy-default — event publication policy
+#
+# Rules are evaluated in order. The first matching rule decides.
+# Event types support glob matching: "download.*", "media.*", "*"
+
+# Downloader can publish download-related events
+- caller: "downloader-qbittorrent"
+  event_types: ["download.*"]
+- caller: "downloader-native-torrent"
+  event_types: ["download.*"]
+
+# Transcoder can publish transcode-related events
+- caller: "transcoder-ffmpeg"
+  event_types: ["transcode.*"]
+
+# Media managers can publish their lifecycle events
+- caller: "media-movies"
+  event_types: ["media.*"]
+- caller: "media-tvshows"
+  event_types: ["media.*"]
+
+# Automation dispatches / wanted lifecycle
+- caller: "media-automation"
+  event_types: ["download.*", "media.*"]
+
+# Scanner can publish file import events
+- caller: "media-scanner"
+  event_types: ["media.*"]
+
+# Indexer can publish indexer lifecycle events
+- caller: "indexer-prowlarr"
+  event_types: ["indexer.*", "module.*"]
+
+# Request media can publish request lifecycle events
+- caller: "request-media"
+  event_types: ["media.*"]
+
+# Notification module can send alerts
+- caller: "notifier-discord"
+  event_types: ["notification.*", "alert.*"]
+
+# Auth module can publish auth lifecycle events
+- caller: "auth-local"
+  event_types: ["auth.*"]
+
+# Any module can publish module lifecycle events
+- caller: "*"
+  event_types: ["module.*", "cluster.*"]
+
+# Catch-all for development (uncomment to allow everything)
+# - caller: "*"
+#   event_types: ["*"]

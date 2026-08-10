@@ -1,0 +1,1 @@
+# Keep bin/ in git; binaries are installed locally by install.sh.

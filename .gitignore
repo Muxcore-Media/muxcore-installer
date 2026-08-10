@@ -1,0 +1,12 @@
+/.env
+/bin/*
+!/bin/.gitkeep
+/data/
+/run/
+/cache/
+*.tar.gz
+*.log
+*.pid
+*.db
+*.token
+.DS_Store

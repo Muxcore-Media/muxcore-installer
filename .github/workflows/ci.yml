@@ -1,0 +1,14 @@
+name: CI
+on:
+  push: { branches: [main, master] }
+  pull_request: { branches: [main, master] }
+jobs:
+  scripts:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+      - name: bash -n
+        run: |
+          for f in install.sh up.sh bootstrap-auth.sh smoke-fixture.sh lib/common.sh; do
+            bash -n "$f"
+          done
