@@ -71,6 +71,30 @@ Default `.env` (from `.env.example`):
 
 If `bin/muxcored` is missing, `up.sh` fails with a clear message pointing at `install.sh` / `MUXCORE_LAB_BIN`.
 
+## Optional profile: `postgres`
+
+Default stack uses `database-sqlite`. To opt into Postgres:
+
+```bash
+export MUXCORE_PROFILE=postgres
+# Optional: point at an existing DB instead of Docker
+# export DATABASE_URL=postgres://muxcore:muxcore@127.0.0.1:5432/muxcore?sslmode=disable
+./up.sh
+```
+
+`up.sh` skips `database-sqlite`, starts `database-postgres` (from `bin/` when present), and if `DATABASE_URL` / `PGHOST` are unset, starts a local `postgres:16-alpine` Docker container (`muxcore-installer-pg`). Without Docker and without `DATABASE_URL`, the postgres profile fails with a clear error. See [`database-postgres/MIGRATION-SQLITE.md`](../database-postgres/MIGRATION-SQLITE.md).
+
+## Optional: metrics / tracing (`MUXCORE_OBSERVABILITY=1`)
+
+`health-monitor` is **always** started with the default stack. Metrics and tracing are opt-in:
+
+```bash
+export MUXCORE_OBSERVABILITY=1
+./up.sh
+```
+
+Starts `metrics-prometheus` (`:9901` scrape) and `tracing-otlp` when present in `bin/` (pins in `versions.env`). Leave `OTEL_EXPORTER_OTLP_ENDPOINT` unset for slog-only spans unless a local collector is running. Combines with `MUXCORE_PROFILE=postgres`.
+
 ## Layout
 
 ```

@@ -71,12 +71,66 @@ stop_all() {
   done
 }
 
+# Optional profile: sqlite (default) | postgres
+PROFILE="${MUXCORE_PROFILE:-${INSTALLER_PROFILE:-sqlite}}"
+
+ensure_postgres() {
+  # When PROFILE=postgres, prefer an existing DATABASE_URL / PG* env; otherwise
+  # start a local Docker Postgres if Docker is available.
+  if [[ -n "${DATABASE_URL:-}" || -n "${PGHOST:-}" ]]; then
+    echo "==> postgres profile: using existing DATABASE_URL/PG* env"
+    return 0
+  fi
+  if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
+    cat >&2 <<EOF
+FAIL: MUXCORE_PROFILE=postgres requires either:
+  - DATABASE_URL (or PGHOST/PGUSER/PGPASSWORD/PGDATABASE), or
+  - Docker to start postgres:16-alpine on 127.0.0.1:5432
+EOF
+    return 1
+  fi
+  local name="${MUXCORE_PG_CONTAINER:-muxcore-installer-pg}"
+  if docker ps --format '{{.Names}}' | grep -qx "$name"; then
+    echo "==> postgres already running ($name)"
+  elif docker ps -a --format '{{.Names}}' | grep -qx "$name"; then
+    echo "==> starting existing postgres container $name"
+    docker start "$name" >/dev/null
+  else
+    echo "==> docker run postgres:16-alpine ($name) on 127.0.0.1:5432"
+    docker run -d --name "$name" \
+      -e POSTGRES_USER=muxcore \
+      -e POSTGRES_PASSWORD=muxcore \
+      -e POSTGRES_DB=muxcore \
+      -p 127.0.0.1:5432:5432 \
+      postgres:16-alpine >/dev/null
+  fi
+  export PGHOST=127.0.0.1 PGPORT=5432 PGUSER=muxcore PGPASSWORD=muxcore PGDATABASE=muxcore PGSSLMODE=disable
+  export DATABASE_URL="postgres://muxcore:muxcore@127.0.0.1:5432/muxcore?sslmode=disable"
+  # Wait for accept
+  for _ in $(seq 1 40); do
+    if docker exec "$name" pg_isready -U muxcore >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 0.5
+  done
+  echo "WARN: postgres may not be ready yet; continuing" >&2
+  return 0
+}
+
 usage() {
   cat <<'EOF'
 usage: ./up.sh [stop]
 
   (default)  Start host stack from bin/ (fixture defaults; no live pirate)
   stop       Stop all processes tracked in run/*.pid
+
+Optional env:
+  MUXCORE_PROFILE=sqlite|postgres   (default sqlite)
+    postgres — skip database-sqlite; start database-postgres; start local
+               Docker Postgres if DATABASE_URL/PG* unset (skips hard-fail
+               only when Docker unavailable and no DATABASE_URL)
+  MUXCORE_OBSERVABILITY=1 — also start metrics-prometheus + tracing-otlp when
+               binaries are present (health-monitor remains on by default)
 
 Requires bin/muxcored (from ./install.sh or MUXCORE_LAB_BIN). Modules listed in
 versions.env are started when their binary is present; missing modules are skipped
@@ -111,7 +165,14 @@ fi
 
 stop_all
 
-echo "==> host stack (DOWNLOADER_ENGINE=${DOWNLOADER_ENGINE:-fixture}; no live pirate)"
+echo "==> host stack (profile=${PROFILE}; DOWNLOADER_ENGINE=${DOWNLOADER_ENGINE:-fixture}; no live pirate)"
+
+if [[ "$PROFILE" == "postgres" ]]; then
+  ensure_postgres
+elif [[ "$PROFILE" != "sqlite" ]]; then
+  echo "FAIL: unknown MUXCORE_PROFILE=$PROFILE (want sqlite|postgres)" >&2
+  exit 2
+fi
 
 start_one core env \
   MUXCORE_CONFIG="$ROOT/muxcore.json" \
@@ -138,9 +199,22 @@ start_mod auth-local auth-local \
   AUTH_DB_PATH="$DATA/auth/auth.db" \
   AUTH_GRPC_ADDR=":9403" AUTH_HTTP_ADDR=":9401"
 
-start_mod database-sqlite database-sqlite \
-  "${C[@]}" MUXCORE_MODULE_ID=database-sqlite \
-  SQLITE_DB_PATH="$DATA/sqlite/muxcore.db"
+if [[ "$PROFILE" == "postgres" ]]; then
+  start_mod database-postgres database-postgres \
+    "${C[@]}" MUXCORE_MODULE_ID=database-postgres \
+    DATABASE_GRPC_ADDR="${DATABASE_GRPC_ADDR:-:9701}" \
+    DATABASE_URL="${DATABASE_URL:-}" \
+    PGHOST="${PGHOST:-127.0.0.1}" \
+    PGPORT="${PGPORT:-5432}" \
+    PGUSER="${PGUSER:-muxcore}" \
+    PGPASSWORD="${PGPASSWORD:-muxcore}" \
+    PGDATABASE="${PGDATABASE:-muxcore}" \
+    PGSSLMODE="${PGSSLMODE:-disable}"
+else
+  start_mod database-sqlite database-sqlite \
+    "${C[@]}" MUXCORE_MODULE_ID=database-sqlite \
+    SQLITE_DB_PATH="$DATA/sqlite/muxcore.db"
+fi
 
 start_mod secrets-file secrets-file \
   "${C[@]}" MUXCORE_MODULE_ID=secrets-file \
@@ -168,6 +242,20 @@ start_mod health-monitor health-monitor \
   HEALTH_MONITOR_GRPC_ADDR="${HEALTH_MONITOR_GRPC_ADDR:-:9202}" \
   HEALTH_MONITOR_HTTP_ADDR="${HEALTH_MONITOR_HTTP_ADDR:-:9203}" \
   HEALTH_MONITOR_INTERVAL="${HEALTH_MONITOR_INTERVAL:-5s}"
+
+# Optional metrics/tracing (MUXCORE_OBSERVABILITY=1)
+if [[ "${MUXCORE_OBSERVABILITY:-0}" == "1" || "${MUXCORE_OBSERVABILITY:-}" == "true" ]]; then
+  start_mod metrics-prometheus metrics-prometheus \
+    "${C[@]}" MUXCORE_MODULE_ID=metrics-prometheus \
+    METRICS_GRPC_ADDR="${METRICS_GRPC_ADDR:-:9900}" \
+    METRICS_HTTP_ADDR="${METRICS_HTTP_ADDR:-:9901}" \
+    METRICS_PATH="${METRICS_PATH:-/metrics}"
+  start_mod tracing-otlp tracing-otlp \
+    "${C[@]}" MUXCORE_MODULE_ID=tracing-otlp \
+    TRACING_GRPC_ADDR="${TRACING_GRPC_ADDR:-:9613}" \
+    OTEL_EXPORTER_OTLP_ENDPOINT="${OTEL_EXPORTER_OTLP_ENDPOINT:-}" \
+    OTEL_EXPORTER_OTLP_INSECURE="${OTEL_EXPORTER_OTLP_INSECURE:-true}"
+fi
 
 start_mod admin-ui admin-ui \
   ADMIN_UI_ADDR=":8082" \
