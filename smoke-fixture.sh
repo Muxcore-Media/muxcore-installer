@@ -1,53 +1,140 @@
 #!/usr/bin/env bash
-# Offline fixture smoke for installer — no pirate APIs, no live torrents.
+# Offline fixture smoke for the installer stack.
+# MUST NOT call pirate APIs / live torrent indexers.
 set -euo pipefail
+
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck disable=SC1091
 [[ -f "$ROOT/.env" ]] && source "$ROOT/.env" || true
 
+BIN="$ROOT/bin"
 CORE_URL="${SMOKE_CORE_URL:-http://127.0.0.1:8080}"
 API_URL="${SMOKE_API_URL:-http://127.0.0.1:18080}"
 ADMIN_URL="${SMOKE_ADMIN_URL:-http://localhost:8082}"
-ENGINE="${DOWNLOADER_ENGINE:-fixture}"
+TIMEOUT="${SMOKE_TIMEOUT_SEC:-120}"
+TOKEN_FILE="${MVP_TOKEN_FILE:-$ROOT/run/admin.token}"
+[[ "$TOKEN_FILE" != /* ]] && TOKEN_FILE="$ROOT/${TOKEN_FILE#./}"
 
-if [[ "${SMOKE_LIVE_ACQUISITION:-0}" == "1" ]]; then
-  echo "NOTE: SMOKE_LIVE_ACQUISITION=1 is set but smoke-fixture.sh never calls pirate APIs."
-  echo "      Use the _mvp lab live path only as operator opt-in; not a product gate."
+# Hard refuse live acquisition in this script.
+if [[ "${SMOKE_LIVE_ACQUISITION:-}" == "1" ]]; then
+  echo "FAIL: smoke-fixture.sh refuses SMOKE_LIVE_ACQUISITION=1 (fixture-only gate)." >&2
+  exit 2
+fi
+if [[ -n "${PIRATEBAY_API_BASE:-}" ]]; then
+  echo "WARN: PIRATEBAY_API_BASE is set but smoke-fixture ignores it (no pirate HTTP)." >&2
 fi
 
-echo "==> smoke-fixture (engine=$ENGINE)"
-code=$(curl -s -o /dev/null -w '%{http_code}' "$CORE_URL/health" || echo 000)
-echo "core health: $code ($CORE_URL/health)"
-if [[ "$code" != "200" && "$code" != "503" ]]; then
-  echo "FAIL: core not healthy — run ./up.sh first" >&2
+echo "==> smoke-fixture: DOWNLOADER_ENGINE=${DOWNLOADER_ENGINE:-fixture} (fixture-only; no pirate APIs)"
+
+echo "==> checking release/lab binaries in $BIN"
+REQUIRED=(muxcored api-rest auth-local)
+MISSING=()
+for b in "${REQUIRED[@]}"; do
+  if [[ ! -x "$BIN/$b" ]]; then
+    MISSING+=("$b")
+  fi
+done
+if ((${#MISSING[@]})); then
+  cat >&2 <<EOF
+FAIL: missing binaries in $BIN: ${MISSING[*]}
+
+The full stack cannot start without module binaries.
+Place GitHub Release binaries into bin/ (preferred), or:
+
+  export MUXCORE_LAB_BIN=/path/to/MuxCore/_mvp/bin
+  ./install.sh
+
+Then: ./up.sh && ./bootstrap-auth.sh && ./smoke-fixture.sh
+EOF
   exit 1
 fi
+echo "OK essential binaries present (${REQUIRED[*]})"
 
-api=$(curl -s -o /dev/null -w '%{http_code}' "$API_URL/api/v1/health" || echo 000)
-echo "api health:  $api ($API_URL/api/v1/health)"
+echo "==> checking core health at ${CORE_URL}/health"
+code=$(curl -s -o /tmp/muxcore-installer-core-health.json -w '%{http_code}' "${CORE_URL}/health" || echo 000)
+if [[ "$code" != "200" && "$code" != "503" ]]; then
+  echo "core not up (HTTP $code). Attempting ./up.sh ..."
+  if ! "$ROOT/up.sh" up; then
+    echo "FAIL: could not start stack. Ensure binaries are present (see install summary)." >&2
+    exit 1
+  fi
+fi
 
-admin=$(curl -s -o /dev/null -w '%{http_code}' "$ADMIN_URL/health" || echo 000)
-echo "admin:       $admin ($ADMIN_URL/health)"
+echo "==> waiting for core ${CORE_URL}/health (timeout ${TIMEOUT}s)"
+deadline=$((SECONDS + TIMEOUT))
+until code=$(curl -s -o /tmp/muxcore-installer-core-health.json -w '%{http_code}' "${CORE_URL}/health" || echo 000); \
+  [[ "$code" == "200" || "$code" == "503" ]]; do
+  if (( SECONDS >= deadline )); then
+    echo "FAIL: core health not ready (last HTTP $code)" >&2
+    cat /tmp/muxcore-installer-core-health.json 2>/dev/null || true
+    echo "Check $ROOT/run/core.log — if modules failed, place release binaries and re-run install/up." >&2
+    exit 1
+  fi
+  sleep 2
+done
+echo "OK core health (HTTP $code)"
 
-TOKEN_FILE="${MVP_TOKEN_FILE:-$ROOT/run/admin.token}"
+echo "==> waiting for api-rest ${API_URL}/api/v1/health"
+until curl -sf "${API_URL}/api/v1/health" >/dev/null 2>&1; do
+  if (( SECONDS >= deadline )); then
+    echo "FAIL: api-rest health not ready" >&2
+    echo "Is bin/api-rest present and started? See run/api-rest.log" >&2
+    exit 1
+  fi
+  sleep 2
+done
+echo "OK api-rest health"
+
+if [[ -x "$BIN/admin-ui" ]]; then
+  echo "==> admin-ui ${ADMIN_URL}/health"
+  adm_deadline=$((SECONDS + 30))
+  until code=$(curl -s -o /dev/null -w '%{http_code}' "${ADMIN_URL}/health" || echo 000); \
+    [[ "$code" == "200" ]]; do
+    if (( SECONDS >= adm_deadline )); then
+      echo "WARN: admin-ui health not HTTP 200 (last $code) — continue" >&2
+      break
+    fi
+    sleep 1
+  done
+  [[ "${code:-}" == "200" ]] && echo "OK admin-ui health"
+fi
+
+if [[ ! -f "$TOKEN_FILE" ]]; then
+  if [[ -x "$BIN/authctl" && -x "$BIN/gettoken" ]]; then
+    echo "==> no token yet; running bootstrap-auth.sh"
+    "$ROOT/bootstrap-auth.sh" || echo "WARN: bootstrap-auth failed (auth may still be warming)" >&2
+  else
+    echo "WARN: no token and missing authctl/gettoken — skip authenticated checks" >&2
+  fi
+fi
+
 if [[ -f "$TOKEN_FILE" ]]; then
-  tok=$(cat "$TOKEN_FILE")
-  movies=$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $tok" "$API_URL/api/movies" || echo 000)
-  echo "api movies:  $movies (Bearer token)"
-else
-  echo "api movies:  skipped (no $TOKEN_FILE — run ./bootstrap-auth.sh)"
+  TOKEN="$(tr -d '\n' <"$TOKEN_FILE")"
+  if [[ -n "$TOKEN" ]]; then
+    echo "==> GET ${API_URL}/api/v1/modules (bearer)"
+    mods="$(curl -sf -H "Authorization: Bearer ${TOKEN}" "${API_URL}/api/v1/modules" || true)"
+    if [[ -n "$mods" ]]; then
+      echo "$mods" | head -c 400
+      echo
+      echo "OK authenticated modules list"
+    else
+      echo "WARN: modules list empty/failed — auth or discovery may still be warming up" >&2
+    fi
+  fi
 fi
 
 cat <<EOF
 
-Fixture notes
-  - DOWNLOADER_ENGINE=fixture (default) — no BitTorrent / no pirate indexers
-  - TMDB_FIXTURE=1 for offline metadata
-  - Full acquire→library path: use _mvp/smoke.sh against this stack when bins present,
-    or Dispatch fixture via admin /automation once modules are registered
+======== fixture path notes ========
+DOWNLOADER_ENGINE=${DOWNLOADER_ENGINE:-fixture}  (must stay 'fixture' for supported demo)
+TMDB_FIXTURE=${TMDB_FIXTURE:-1}
+Library root: ${MVP_LIBRARY_ROOT:-$ROOT/data/library}
+Downloads:    ${MVP_DOWNLOADS_DIR:-$ROOT/data/downloads}
+This smoke does NOT call Apibay/pirate indexers or start live torrents.
+Do NOT set PIRATEBAY_API_BASE or SMOKE_LIVE_ACQUISITION for product smoke.
 
-VIEW-ME: $ROOT/run/VIEW-ME.txt
+URLs: $ROOT/run/VIEW-ME.txt
+Admin: ${ADMIN_URL}
+
+PASS: installer fixture smoke (health; no live acquisition)
 EOF
-
-echo "==> smoke-fixture OK (core reachable)"
-exit 0

@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
-# Non-interactive admin bootstrap for installer stack.
+# Bootstrap local admin user + session token (installer host stack).
+# Uses bin/authctl and bin/gettoken; may try sibling source builds if missing.
 set -euo pipefail
+
 ROOT="$(cd "$(dirname "$0")" && pwd)"
+BIN="$ROOT/bin"
+
 # shellcheck disable=SC1091
 [[ -f "$ROOT/.env" ]] && source "$ROOT/.env" || true
 
@@ -9,52 +13,80 @@ USER="${MVP_ADMIN_USER:-admin}"
 PASS="${MVP_ADMIN_PASSWORD:-admin-dev-only}"
 AUTH_ADDR="${AUTH_GRPC_ADDR:-127.0.0.1:9403}"
 TOKEN_FILE="${MVP_TOKEN_FILE:-$ROOT/run/admin.token}"
-BIN="$ROOT/bin"
+[[ "$TOKEN_FILE" != /* ]] && TOKEN_FILE="$ROOT/${TOKEN_FILE#./}"
 
-mkdir -p "$ROOT/run"
+mkdir -p "$ROOT/run" "$BIN"
 
 ensure_helper() {
   local name="$1"
   if [[ -x "$BIN/$name" ]]; then
     return 0
   fi
+
+  # Lab copy
   if [[ -n "${MUXCORE_LAB_BIN:-}" && -x "${MUXCORE_LAB_BIN}/$name" ]]; then
     install -m 0755 "${MUXCORE_LAB_BIN}/$name" "$BIN/$name"
+    echo "==> copied $name from MUXCORE_LAB_BIN"
     return 0
   fi
-  if [[ -x "$ROOT/../_mvp/bin/$name" ]]; then
-    install -m 0755 "$ROOT/../_mvp/bin/$name" "$BIN/$name"
-    return 0
+  local lab
+  for lab in "$ROOT/../_mvp/bin" "$HOME/Projects/MuxCore/_mvp/bin"; do
+    if [[ -x "$lab/$name" ]]; then
+      install -m 0755 "$lab/$name" "$BIN/$name"
+      echo "==> copied $name from $lab"
+      return 0
+    fi
+  done
+
+  # Optional sibling Go build (do not assume monorepo always exists).
+  if ! command -v go >/dev/null 2>&1; then
+    return 1
   fi
-  if command -v go >/dev/null 2>&1; then
-    case "$name" in
-      authctl)
-        if [[ -d "$ROOT/../auth-local/cmd/authctl" ]]; then
-          (cd "$ROOT/../auth-local" && go build -o "$BIN/authctl" ./cmd/authctl)
-          return 0
-        fi
-        ;;
-      gettoken)
-        if [[ -d "$ROOT/../_mvp/cmd/gettoken" ]]; then
-          (cd "$ROOT/../_mvp" && go build -o "$BIN/gettoken" ./cmd/gettoken)
-          return 0
-        fi
-        ;;
-    esac
-  fi
-  echo "FAIL: bin/$name missing. Re-run ./install.sh with lab bins or place $name in bin/" >&2
-  exit 1
+  case "$name" in
+    authctl)
+      if [[ -d "$ROOT/../auth-local/cmd/authctl" ]]; then
+        echo "==> building authctl from sibling auth-local"
+        (cd "$ROOT/../auth-local" && go build -o "$BIN/authctl" ./cmd/authctl)
+        return 0
+      fi
+      ;;
+    gettoken)
+      if [[ -d "$ROOT/../_mvp/cmd/gettoken" ]]; then
+        echo "==> building gettoken from sibling _mvp"
+        (cd "$ROOT/../_mvp" && go build -o "$BIN/gettoken" ./cmd/gettoken)
+        return 0
+      fi
+      ;;
+  esac
+  return 1
 }
 
-ensure_helper authctl
-ensure_helper gettoken
+missing=()
+ensure_helper authctl || missing+=(authctl)
+ensure_helper gettoken || missing+=(gettoken)
+if ((${#missing[@]} > 0)); then
+  cat >&2 <<EOF
+FAIL: missing helper CLI(s) under $BIN: ${missing[*]}
+
+Place release/lab binaries into bin/, or:
+  export MUXCORE_LAB_BIN=/path/to/_mvp/bin && ./install.sh
+  # or build siblings when present:
+  #   (cd ../auth-local && go build -o ../muxcore-installer/bin/authctl ./cmd/authctl)
+  #   (cd ../_mvp && go build -o ../muxcore-installer/bin/gettoken ./cmd/gettoken)
+
+This installer does not assume a full monorepo checkout.
+EOF
+  exit 1
+fi
 
 echo "==> ensuring user $USER exists"
-if ! "$BIN/authctl" -addr "$AUTH_ADDR" adduser "$USER" "$PASS" 2>/tmp/muxcore-installer-adduser.err; then
-  if grep -qiE 'already|exists|unique|duplicate' /tmp/muxcore-installer-adduser.err; then
+err="$(mktemp)"
+trap 'rm -f "$err"' EXIT
+if ! "$BIN/authctl" -addr "$AUTH_ADDR" adduser "$USER" "$PASS" 2>"$err"; then
+  if grep -qiE 'already|exists|unique|duplicate' "$err"; then
     echo "user already exists"
   else
-    cat /tmp/muxcore-installer-adduser.err >&2
+    cat "$err" >&2
     exit 1
   fi
 fi
@@ -65,4 +97,4 @@ echo "==> ensuring admin role"
 echo "==> fetching session token"
 "$BIN/gettoken" -addr "$AUTH_ADDR" -user "$USER" -password "$PASS" -out "$TOKEN_FILE"
 echo "token written to $TOKEN_FILE"
-echo "login: $USER / $PASS (change for anything beyond laptop demo)"
+echo "password (printed once for local demo): $PASS"

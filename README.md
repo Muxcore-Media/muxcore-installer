@@ -1,76 +1,88 @@
-# muxcore-installer
+# MuxCore installer
 
-Single-machine installer for MuxCore. Downloads published `muxcored` + essential module release assets from GitHub Releases, lays out `bin/` / `data/` / `run/`, writes TLS-off-dev `.env`, and starts a **fixture-only** host stack.
+Single-machine install surface for a **fixture-only** laptop demo. Downloads (or copies) `muxcored` + module binaries, lays out data dirs, starts a host stack, bootstraps admin auth, and runs a health smoke — **without** live pirate indexers or BitTorrent.
 
-No sibling monorepo is required when module release tarballs exist. Today many module tags are published without binary assets yet — on a laptop lab you can point at `_mvp/bin` as a fallback.
+This is the end-user path. [`_mvp`](../_mvp) remains a developer reference lab.
 
 ## Prerequisites
 
 | Tool | Required? |
 |------|-----------|
 | `curl`, `tar`, `bash` | Yes |
-| `gh` CLI (authenticated) | Recommended for private `Muxcore-Media` release downloads |
-| Go | **Optional** if using release binaries (or lab-copied bins). Needed only to build `authctl` / `gettoken` from sibling sources when those helpers are missing. |
-| Docker / Podman | **Optional**. This installer defaults to host binaries via `./up.sh`. |
+| Go | **Optional** — only if building helper CLIs from sibling sources |
+| Docker | **Optional** — this installer runs **host binaries**, not compose |
+| `gh` | Optional — helps download private release assets |
+| Prebuilt module binaries | Via GitHub Releases **or** lab fallback (below) |
 
-Supported demo path: **fixture acquisition only** (`DOWNLOADER_ENGINE=fixture`). Live pirate indexers are not started and are refused by `smoke-fixture.sh`.
+Supported OS/arch for release assets: linux/darwin × amd64/arm64.
 
 ## Quick start
 
 ```bash
-git clone https://github.com/Muxcore-Media/muxcore-installer.git
-cd muxcore-installer
+# 1) Fetch binaries + write .env + VIEW-ME
 ./install.sh
+
+# 2) Start host stack (bin/*)
 ./up.sh
+
+# 3) Create admin user + session token (password printed once)
 ./bootstrap-auth.sh
+
+# 4) Health smoke (core required; no pirate APIs)
 ./smoke-fixture.sh
-cat run/VIEW-ME.txt
+
+# Stop
+./up.sh stop
 ```
 
-### Laptop lab fallback (no module release binaries yet)
+URLs and login defaults are written to `run/VIEW-ME.txt`.
 
-If `install.sh` reports MISSING modules:
+## Lab binary fallback (`MUXCORE_LAB_BIN`)
+
+Many modules do not publish GitHub Release binary assets yet. Point the installer at a directory of built binaries (typically the laptop lab):
 
 ```bash
-# From a MuxCore workspace that already built _mvp/bin:
-MUXCORE_LAB_BIN="$HOME/Projects/MuxCore/_mvp/bin" ./install.sh
-# or simply place muxcore-installer next to _mvp — install auto-detects ../_mvp/bin
+export MUXCORE_LAB_BIN="$HOME/Projects/MuxCore/_mvp/bin"
+./install.sh
 ```
 
-Pins live in [`versions.env`](versions.env) (`core@v0.5.0` + MVP module tags).
+If `MUXCORE_LAB_BIN` is unset, `install.sh` also tries sibling `../_mvp/bin` when present.
+
+Pins live in [`versions.env`](versions.env).
+
+## Fixture-only policy
+
+Default `.env` (from `.env.example`):
+
+- `DOWNLOADER_ENGINE=fixture`
+- `TMDB_FIXTURE=1`
+- `PIRATEBAY_API_BASE` / `SMOKE_LIVE_ACQUISITION` **unset**
+
+`./up.sh` never starts `indexer-piratebay`. `./smoke-fixture.sh` requires essential binaries in `bin/`, curls core + api health, optionally bootstraps auth, and prints fixture notes — it does **not** call pirate APIs. Exit **non-zero** if binaries are missing or core/api health fails.
 
 ## Scripts
 
 | Script | Role |
 |--------|------|
-| `install.sh` | Fetch `Muxcore-Media/core@v0.5.0` + pinned module assets; lay out dirs; write `.env` + `run/VIEW-ME.txt` |
-| `up.sh` / `up.sh stop` | Start/stop host processes (TLS disabled, fixture downloader, **no** pirate indexer) |
-| `bootstrap-auth.sh` | Non-interactive admin user + role + session token (`authctl` / `gettoken`) |
-| `smoke-fixture.sh` | Offline smoke: binary presence, core/api health, auth modules list; never hits pirate APIs |
+| `install.sh` | Download/copy binaries, dirs, `.env`, `run/VIEW-ME.txt` |
+| `up.sh` / `up.sh stop` | Start/stop host processes from `bin/` |
+| `bootstrap-auth.sh` | Admin user via `authctl` + token via `gettoken` |
+| `smoke-fixture.sh` | Binary gate + core/api health + fixture notes (no pirate APIs) |
 
-## VIEW-ME URLs (defaults)
-
-- Admin UI: http://localhost:8082 (`admin` / `admin-dev-only`)
-- Core health: http://127.0.0.1:8080/health
-- REST API: http://127.0.0.1:18080/api/v1/health
-- Monitor: http://127.0.0.1:9203/status
-
-Printed again in `run/VIEW-ME.txt` after install/up.
+If `bin/muxcored` is missing, `up.sh` fails with a clear message pointing at `install.sh` / `MUXCORE_LAB_BIN`.
 
 ## Layout
 
 ```
 bin/           # muxcored + modules + authctl/gettoken
-data/          # sqlite, library, downloads, secrets, …
+data/          # sqlite, auth, library, downloads, …
 run/           # pid/log files, VIEW-ME.txt, admin.token
-policies/      # bundled call/publish policy YAML for host mode
-muxcore.json   # core listen config
-versions.env   # pin matrix
-.env.example   # TLS-off-dev + fixture defaults
+policies/      # call + publish policy YAML
+muxcore.json   # core config
+versions.env   # release pin matrix
 ```
 
-## Notes
+## Dev notes
 
-- `_mvp` remains the deep reference lab (full `smoke.sh`, media-ui, etc.). This repo is the end-user path.
-- Do not set `PIRATEBAY_API_BASE` or `SMOKE_LIVE_ACQUISITION=1` for the supported installer demo.
-- When module GoReleaser assets land, re-run `./install.sh` on a clean `bin/` to prefer release tarballs over lab copies.
+- Helper CLIs (`authctl`, `gettoken`): preferred from releases/lab; `bootstrap-auth.sh` may build from sibling `auth-local` / `_mvp` **only if present** — it does not assume a monorepo.
+- Consumer media UI is off by default (`MVP_ENABLE_MEDIA_UI=0`).

@@ -29,9 +29,10 @@ download_url() {
     echo "    cached $(basename "$dest")"
     return 0
   fi
-  echo "    GET $url"
-  if curl -fsSL -o "$dest.partial" "$url"; then
+  # Quiet on 404 (private repos / missing assets); caller tries gh + lab fallback.
+  if curl -fsSL -o "$dest.partial" "$url" 2>/dev/null; then
     mv "$dest.partial" "$dest"
+    echo "    downloaded $(basename "$dest")"
     return 0
   fi
   rm -f "$dest.partial"
@@ -74,6 +75,29 @@ try_release_asset() {
     "${asset_prefix}_${OS}_${ARCH}.tar.gz"
     "${bin_name}_${OS}_${ARCH}.tar.gz"
   )
+
+  # Prefer gh for private Muxcore-Media releases (curl gets 404 without token).
+  if gh_available; then
+    local ghtmp
+    ghtmp="$(mktemp -d "$CACHE/gh.XXXXXX")"
+    if gh release download "$tag" --repo "$repo" --dir "$ghtmp" -p "*${OS}_${ARCH}*" >/dev/null 2>&1 \
+      || gh release download "$tag" --repo "$repo" --dir "$ghtmp" -p "*.tar.gz" >/dev/null 2>&1; then
+      local tarball
+      tarball="$(find "$ghtmp" -type f \( -name '*.tar.gz' -o -name '*.tgz' \) | head -1 || true)"
+      if [[ -n "$tarball" ]] && extract_binary_from_tarball "$tarball" "$bin_name"; then
+        rm -rf "$ghtmp"
+        return 0
+      fi
+      if [[ -f "$ghtmp/$bin_name" ]]; then
+        install -m 0755 "$ghtmp/$bin_name" "$BIN/$bin_name"
+        rm -rf "$ghtmp"
+        echo "    installed bin/$bin_name (gh asset)"
+        return 0
+      fi
+    fi
+    rm -rf "$ghtmp"
+  fi
+
   local asset url dest
   for asset in "${candidates[@]}"; do
     dest="$CACHE/${repo##*/}-${tag}-${asset}"
@@ -85,29 +109,6 @@ try_release_asset() {
       echo "    WARN: tarball $asset had no usable binary named $bin_name" >&2
     fi
   done
-
-  # Private repos / auth: try gh release download when curl 404s.
-  if gh_available; then
-    local ghtmp
-    ghtmp="$(mktemp -d "$CACHE/gh.XXXXXX")"
-    if gh release download "$tag" --repo "$repo" --dir "$ghtmp" -p "*${OS}_${ARCH}*" >/dev/null 2>&1 \
-      || gh release download "$tag" --repo "$repo" --dir "$ghtmp" >/dev/null 2>&1; then
-      local tarball
-      tarball="$(find "$ghtmp" -type f \( -name '*.tar.gz' -o -name '*.tgz' \) | head -1 || true)"
-      if [[ -n "$tarball" ]] && extract_binary_from_tarball "$tarball" "$bin_name"; then
-        rm -rf "$ghtmp"
-        return 0
-      fi
-      # Direct binary asset
-      if [[ -f "$ghtmp/$bin_name" ]]; then
-        install -m 0755 "$ghtmp/$bin_name" "$BIN/$bin_name"
-        rm -rf "$ghtmp"
-        echo "    installed bin/$bin_name (gh asset)"
-        return 0
-      fi
-    fi
-    rm -rf "$ghtmp"
-  fi
   return 1
 }
 

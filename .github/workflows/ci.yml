@@ -1,14 +1,32 @@
 name: CI
+
 on:
-  push: { branches: [main, master] }
-  pull_request: { branches: [main, master] }
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+permissions: read-all
+
 jobs:
   scripts:
+    name: Shell syntax
     runs-on: self-hosted
     steps:
-      - uses: actions/checkout@v4
-      - name: bash -n
+      - name: Clean runner workspace
+        run: rm -rf "${GITHUB_WORKSPACE}/"* "${RUNNER_TEMP}/"* 2>/dev/null; true
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: shellcheck or bash -n
         run: |
-          for f in install.sh up.sh bootstrap-auth.sh smoke-fixture.sh lib/common.sh; do
-            bash -n "$f"
-          done
+          set -euo pipefail
+          scripts=(install.sh up.sh bootstrap-auth.sh smoke-fixture.sh lib/common.sh)
+          if command -v shellcheck >/dev/null 2>&1; then
+            echo "==> shellcheck ${scripts[*]}"
+            shellcheck -x "${scripts[@]}"
+          else
+            echo "==> shellcheck not installed; bash -n fallback"
+            for s in "${scripts[@]}"; do
+              echo "bash -n $s"
+              bash -n "$s"
+            done
+          fi

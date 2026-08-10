@@ -1,8 +1,10 @@
 /.env
 /bin/*
 !/bin/.gitkeep
-/data/
-/run/
+/data/*
+!/data/.gitkeep
+/run/*
+!/run/.gitkeep
 /cache/
 *.tar.gz
 *.log
