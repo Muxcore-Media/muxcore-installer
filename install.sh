@@ -217,7 +217,7 @@ fi
 source "$ROOT/.env"
 write_view_me "$ROOT"
 
-ESSENTIAL=(muxcored api-rest auth-local database-sqlite admin-ui)
+ESSENTIAL=(muxcored api-rest auth-local database-sqlite secrets-file admin-ui)
 ESSENTIAL_OK=1
 for e in "${ESSENTIAL[@]}"; do
   if [[ ! -x "$BIN/$e" ]]; then
