@@ -2,16 +2,27 @@
 #
 # Rules are evaluated in order. The first matching rule decides.
 # Wildcard "*" matches any caller, target, or method.
+#
+# Laptop / installer demo: the catch-all at the bottom is ENABLED so the
+# fixture mesh works without hand-editing YAML. For production, comment it
+# out and keep least-privilege rules only.
+#
+# Installer: muxcore-installer ships copies under policies/call-policy.yaml
+# and sets CALL_POLICY_FILE to that path (do not rely on process cwd).
 
 # Allow downloader to read/write storage
 - caller: "downloader-qbittorrent"
   target: "storage-local"
   methods: ["Put", "Get", "Stat", "Delete"]
 
+- caller: "downloader-native-torrent"
+  target: "storage"
+  methods: ["read", "write", "Put", "Get", "Stat", "Delete"]
+
 # Allow scanner to write to storage (imports downloaded files)
 - caller: "media-scanner"
   target: "storage"
-  methods: ["write"]
+  methods: ["write", "read"]
 
 # Allow scanner as _public caller to access storage
 - caller: "_public"
@@ -25,18 +36,29 @@
 
 # Allow media managers to query each other
 - caller: "media-movies"
-  target: "media-tv"
-  methods: ["Search", "Lookup"]
+  target: "media-tvshows"
+  methods: ["Search", "Lookup", "*"]
+- caller: "media-tvshows"
+  target: "media-movies"
+  methods: ["Search", "Lookup", "*"]
 
-# Allow media-jellyfin to stream from storage
+# Automation ↔ acquisition / library
+- caller: "media-automation"
+  target: "*"
+  methods: ["*"]
+
+# Allow media-jellyfin / jellyfin to stream from storage
 - caller: "media-jellyfin"
+  target: "storage"
+  methods: ["read", "write"]
+- caller: "jellyfin"
   target: "storage"
   methods: ["read", "write"]
 
 # Allow any authenticated module to check auth status
 - caller: "*"
   target: "auth-local"
-  methods: ["Validate"]
+  methods: ["Validate", "*"]
 
 # Dev-mode: allow unauthenticated callers (from modules without auth) to
 # access storage. In production, deploy an auth module (e.g. auth-local)
@@ -45,7 +67,8 @@
   target: "storage"
   methods: ["read", "write"]
 
-# Catch-all for development: allow everything
-# - caller: "*"
-#   target: "*"
-#   methods: ["*"]
+# Laptop / installer demo catch-all — leave enabled for fixture mesh.
+# Comment out for production least-privilege deployments.
+- caller: "*"
+  target: "*"
+  methods: ["*"]

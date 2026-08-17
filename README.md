@@ -48,7 +48,7 @@ export MUXCORE_LAB_BIN="$HOME/Projects/MuxCore/_mvp/bin"
 
 If `MUXCORE_LAB_BIN` is unset, `install.sh` also tries sibling `../_mvp/bin` when present.
 
-Pins live in [`versions.env`](versions.env).
+Pins live in [`versions.env`](versions.env). Human-readable matrix + spool sync rule: [`PIN-MATRIX.md`](PIN-MATRIX.md) (`./scripts/check-pin-matrix.sh`).
 
 ## Fixture-only policy
 
