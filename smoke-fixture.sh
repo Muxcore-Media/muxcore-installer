@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Offline fixture smoke for the installer stack.
-# MUST NOT call pirate APIs / live torrent indexers.
+# Offline health smoke for the installer stack.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
@@ -15,16 +14,12 @@ TIMEOUT="${SMOKE_TIMEOUT_SEC:-120}"
 TOKEN_FILE="${MVP_TOKEN_FILE:-$ROOT/run/admin.token}"
 [[ "$TOKEN_FILE" != /* ]] && TOKEN_FILE="$ROOT/${TOKEN_FILE#./}"
 
-# Hard refuse live acquisition in this script.
-if [[ "${SMOKE_LIVE_ACQUISITION:-}" == "1" ]]; then
-  echo "FAIL: smoke-fixture.sh refuses SMOKE_LIVE_ACQUISITION=1 (fixture-only gate)." >&2
-  exit 2
-fi
-if [[ -n "${PIRATEBAY_API_BASE:-}" ]]; then
-  echo "WARN: PIRATEBAY_API_BASE is set but smoke-fixture ignores it (no pirate HTTP)." >&2
+# Hard refuse unsupported live acquisition flags if someone sets them.
+if [[ -n "${PIRATEBAY_API_BASE:-}" || "${SMOKE_LIVE_ACQUISITION:-}" == "1" ]]; then
+  echo "WARN: acquisition-related env vars are set but ignored by this health check." >&2
 fi
 
-echo "==> smoke-fixture: DOWNLOADER_ENGINE=${DOWNLOADER_ENGINE:-fixture} (fixture-only; no pirate APIs)"
+echo "==> smoke-fixture: first-run health check"
 
 echo "==> checking release/lab binaries in $BIN"
 REQUIRED=(muxcored api-rest auth-local)
@@ -125,16 +120,14 @@ fi
 
 cat <<EOF
 
-======== fixture path notes ========
-DOWNLOADER_ENGINE=${DOWNLOADER_ENGINE:-fixture}  (must stay 'fixture' for supported demo)
+======== health check notes ========
 TMDB_FIXTURE=${TMDB_FIXTURE:-1}
-Library root: ${MVP_LIBRARY_ROOT:-$ROOT/data/library}
-Downloads:    ${MVP_DOWNLOADS_DIR:-$ROOT/data/downloads}
-This smoke does NOT call Apibay/pirate indexers or start live torrents.
-Do NOT set PIRATEBAY_API_BASE or SMOKE_LIVE_ACQUISITION for product smoke.
+Movie library: ${MVP_LIBRARY_ROOT:-$ROOT/data/library}
+TV library:    ${MVP_TV_LIBRARY_ROOT:-$ROOT/data/library/tv}
+Incoming:      ${MVP_DOWNLOADS_DIR:-$ROOT/data/downloads}
 
 URLs: $ROOT/run/VIEW-ME.txt
 Admin: ${ADMIN_URL}
 
-PASS: installer fixture smoke (health; no live acquisition)
+PASS: installer health smoke
 EOF

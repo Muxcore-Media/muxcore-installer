@@ -30,7 +30,12 @@ Spool end-user tags (`minimal`, `media`, `acquisition`, `default`, `library-plus
 | `media-tvshows` | `v0.1.9` |
 | `media-automation` | `v0.1.8` |
 | `media-scanner` | `v0.1.9` |
-| `downloader-native-torrent` | `v0.2.4` |
+| `media-custom-formats` | `v0.1.6` |
+| `media-rename` | `v0.2.6` |
+| `media-ffprobe` | `v0.1.8` |
+| `media-subtitles` | `v0.4.8` |
+| `cache-local` | `v0.1.1` |
+| `ratelimit-tokenbucket` | `v0.1.2` |
 | `media-root-folders` | `v0.1.6` |
 | `request-media` | `v0.2.7` |
 | `notification-default` | `v0.1.6` |
@@ -41,7 +46,7 @@ Spool end-user tags (`minimal`, `media`, `acquisition`, `default`, `library-plus
 | Module | Tag | Spool tag |
 |--------|-----|-----------|
 | `scheduler-cron` | `v0.1.5` | `default` |
-| `cache-redis` | `v0.1.4` | `default` |
+| `cache-redis` | `v0.1.4` | `cache-redis` |
 | `ratelimit-tokenbucket` | `v0.1.2` | `default` |
 | `workflow-tapestry` | `v0.1.5` | `default` |
 | `feature-flags-file` | `v0.1.2` | `default` |

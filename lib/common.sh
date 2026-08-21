@@ -64,18 +64,22 @@ write_view_me() {
   local user="${MVP_ADMIN_USER:-admin}"
   local pass="${MVP_ADMIN_PASSWORD:-admin-dev-only}"
   cat >"$out" <<EOF
-MuxCore installer — VIEW-ME
+MuxCore — you're ready
 
   Admin UI:     http://localhost:8082
                 login: ${user} / ${pass}
 
   Consumer UI:  http://127.0.0.1:5173
-                (optional; needs media-ui dist + mediauiprox)
+                (optional; enable with MVP_ENABLE_MEDIA_UI=1 + media-ui dist)
 
   Core health:  http://127.0.0.1:8080/health
   REST API:     http://127.0.0.1:18080/api/v1/health
   Jellyfin:     http://127.0.0.1:8475/healthz
   Monitor:      http://127.0.0.1:9203/status
+
+  Movie library: ${MVP_LIBRARY_ROOT:-$root/data/library}
+  TV library:    ${MVP_TV_LIBRARY_ROOT:-$root/data/library/tv}
+  Incoming:      ${MVP_DOWNLOADS_DIR:-$root/data/downloads}
 
 Useful admin pages
   /dashboard/monitor
@@ -84,9 +88,8 @@ Useful admin pages
   /jellyfin
   /events?filter=health
 
-Fixture demo
-  DOWNLOADER_ENGINE=fixture (default) — no pirate indexers / no live torrents
-  TMDB_FIXTURE=1 for offline metadata
+Metadata
+  TMDB_FIXTURE=${TMDB_FIXTURE:-1} (offline demo titles when no API key)
 
 Start:  ./up.sh
 Stop:   ./up.sh stop
@@ -94,4 +97,70 @@ Auth:   ./bootstrap-auth.sh
 Smoke:  ./smoke-fixture.sh
 EOF
   echo "wrote $out"
+}
+
+onboard_step() {
+  printf '\n── Step %s/%s — %s ──\n' "$1" "$2" "$3"
+}
+
+onboard_prompt() {
+  local var="$1" q="$2" def="${3:-}" ans
+  if [[ -n "$def" ]]; then
+    read -r -p "$q [$def]: " ans || true
+    ans="${ans:-$def}"
+  else
+    read -r -p "$q: " ans || true
+  fi
+  printf -v "$var" '%s' "$ans"
+}
+
+onboard_prompt_secret() {
+  local var="$1" q="$2" def="${3:-}" ans
+  if [[ -n "$def" ]]; then
+    read -r -s -p "$q [press Enter to keep current]: " ans || true
+    echo
+    ans="${ans:-$def}"
+  else
+    read -r -s -p "$q: " ans || true
+    echo
+  fi
+  printf -v "$var" '%s' "$ans"
+}
+
+onboard_yesno() {
+  local q="$1" def="${2:-y}" ans
+  read -r -p "$q [$def]: " ans || true
+  ans="${ans:-$def}"
+  [[ "$ans" =~ ^[Yy] ]]
+}
+
+env_set() {
+  local envf="$1" key="$2" val="$3"
+  local tmp
+  tmp="$(mktemp)"
+  touch "$envf"
+  if grep -q "^${key}=" "$envf" 2>/dev/null; then
+    # shellcheck disable=SC2016
+    awk -v k="$key" -v v="$val" 'BEGIN{FS=OFS="="} $1==k{$0=k"="v} {print}' "$envf" >"$tmp"
+    mv "$tmp" "$envf"
+  else
+    printf '%s=%s\n' "$key" "$val" >>"$envf"
+    rm -f "$tmp"
+  fi
+}
+
+resolve_install_dir() {
+  local raw="$1"
+  local resolved
+  if resolved="$(cd / && realpath -m "$raw" 2>/dev/null)"; then
+    printf '%s\n' "$resolved"
+  elif resolved="$(python3 -c 'import os,sys; print(os.path.abspath(os.path.expanduser(sys.argv[1])))' "$raw" 2>/dev/null)"; then
+    printf '%s\n' "$resolved"
+  else
+    case "$raw" in
+      ~/*) printf '%s\n' "${HOME}/${raw#~/}" ;;
+      ~) printf '%s\n' "$HOME" ;;
+      *) printf '%s\n' "$raw" ;;
+    esac
+  fi
 }
