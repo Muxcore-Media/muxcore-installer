@@ -29,7 +29,7 @@ export MUXCORE_CONFIG="${MUXCORE_CONFIG:-$ROOT/muxcore.json}"
 MESH="${MUXCORE_MESH_ADDR:-127.0.0.1:9090}"
 
 mkdir -p "$BIN" "$RUN" \
-  "$DATA"/{movies,tvshows,automation,scanner,roots,sqlite,secrets,encryption,library/tv,storage,auth,jellyfin,downloads,request}
+  "$DATA"/{movies,tvshows,automation,scanner,roots,sqlite,secrets,encryption,library/tv,storage,auth,jellyfin,downloads,request,formats,rename,ffprobe,subtitles/files}
 
 have_bin() { [[ -x "$BIN/$1" ]]; }
 
@@ -121,7 +121,7 @@ usage() {
   cat <<'EOF'
 usage: ./up.sh [stop]
 
-  (default)  Start host stack from bin/ (fixture defaults; no live pirate)
+  (default)  Start host stack from bin/ (default platform + media modules)
   stop       Stop all processes tracked in run/*.pid
 
 Optional env:
@@ -165,7 +165,7 @@ fi
 
 stop_all
 
-echo "==> host stack (profile=${PROFILE}; DOWNLOADER_ENGINE=${DOWNLOADER_ENGINE:-fixture}; no live pirate)"
+echo "==> host stack (profile=${PROFILE}; default + media modules)"
 
 if [[ "$PROFILE" == "postgres" ]]; then
   ensure_postgres
@@ -236,6 +236,16 @@ start_mod publish-policy-default publish-policy-default \
   "${C[@]}" MUXCORE_MODULE_ID=publish-policy-default \
   PUBLISH_POLICY_FILE="$PUBLISH_POLICY"
 
+start_mod cache-local cache-local \
+  "${C[@]}" MUXCORE_MODULE_ID=cache-local \
+  CACHE_LOCAL_GRPC_ADDR="${CACHE_LOCAL_GRPC_ADDR:-:9600}"
+
+start_mod ratelimit-tokenbucket ratelimit-tokenbucket \
+  "${C[@]}" MUXCORE_MODULE_ID=ratelimit-tokenbucket \
+  RATELIMIT_ENABLED="${RATELIMIT_ENABLED:-false}" \
+  RATELIMIT_RATE="${RATELIMIT_RATE:-100}" \
+  RATELIMIT_BURST="${RATELIMIT_BURST:-200}"
+
 start_mod health-monitor health-monitor \
   "${C[@]}" MUXCORE_MODULE_ID=health-monitor \
   MUXCORE_MESH_DIAL_LOCAL=true \
@@ -286,26 +296,47 @@ start_mod media-automation media-automation \
   MUXCORE_MESH_DIAL_LOCAL=true \
   AUTOMATION_DB_PATH="$DATA/automation/automation.db" \
   AUTOMATION_GRPC_ADDR=":9460" \
-  AUTOMATION_EVENT_SUBSCRIBE_DELAY=1s
+  AUTOMATION_EVENT_SUBSCRIBE_DELAY=1s \
+  AUTOMATION_DOWNLOAD_DIR="${MVP_DOWNLOADS_DIR:-$DATA/downloads}"
+
+LIBRARY_ROOT="${MVP_LIBRARY_ROOT:-$DATA/library}"
+TV_LIBRARY_ROOT="${MVP_TV_LIBRARY_ROOT:-$DATA/library/tv}"
+INCOMING_DIR="${MVP_DOWNLOADS_DIR:-$DATA/downloads}"
+mkdir -p "$LIBRARY_ROOT" "$TV_LIBRARY_ROOT" "$INCOMING_DIR" \
+  "$DATA/formats" "$DATA/rename" "$DATA/ffprobe" "$DATA/subtitles/files"
+
+start_mod media-custom-formats media-custom-formats \
+  "${C[@]}" MUXCORE_MODULE_ID=media-custom-formats \
+  FORMATS_DB_PATH="$DATA/formats/formats.db" \
+  FORMATS_GRPC_ADDR=":9490" \
+  FORMATS_SEED_DEFAULTS=true
+
+start_mod media-rename media-rename \
+  "${C[@]}" MUXCORE_MODULE_ID=media-rename \
+  RENAME_DB_PATH="$DATA/rename/rename.db" \
+  RENAME_GRPC_ADDR="${RENAME_GRPC_ADDR:-:9510}" \
+  RENAME_IMPORT_MODE=copy
+
+start_mod media-ffprobe media-ffprobe \
+  "${C[@]}" MUXCORE_MODULE_ID=media-ffprobe \
+  FFPROBE_DB_PATH="$DATA/ffprobe/cache.db" \
+  FFPROBE_GRPC_ADDR="${FFPROBE_GRPC_ADDR:-:9480}"
+
+start_mod media-subtitles media-subtitles \
+  "${C[@]}" MUXCORE_MODULE_ID=media-subtitles \
+  SUBS_DB_PATH="$DATA/subtitles/subtitles.db" \
+  SUBS_DIR="$DATA/subtitles/files" \
+  SUBS_GRPC_ADDR="${SUBS_GRPC_ADDR:-:9520}"
 
 start_mod media-scanner media-scanner \
   "${C[@]}" MUXCORE_MODULE_ID=media-scanner \
   SCANNER_DB_PATH="$DATA/scanner/scanner.db" \
-  SCANNER_LIBRARY_ROOT="$DATA/library" \
-  SCANNER_DEFAULT_WATCH_DIR="$DATA/downloads" \
+  SCANNER_LIBRARY_ROOT="$LIBRARY_ROOT" \
+  SCANNER_TV_LIBRARY_ROOT="$TV_LIBRARY_ROOT" \
+  SCANNER_DEFAULT_WATCH_DIR="$INCOMING_DIR" \
   SCANNER_GRPC_ADDR=":9470" \
   SCANNER_IMPORT_MODE=copy \
   SCANNER_MIN_VIDEO_BYTES=0
-
-start_mod downloader-native-torrent downloader-native-torrent \
-  "${C[@]}" MUXCORE_MODULE_ID=downloader-native-torrent \
-  DOWNLOADER_GRPC_ADDR=":9461" \
-  DOWNLOAD_DIR="$DATA/downloads" \
-  DOWNLOADER_ENGINE="${DOWNLOADER_ENGINE:-fixture}" \
-  SEED_MINUTES=1 \
-  SEED_RATIO=1.0
-
-# Intentionally never start indexer-piratebay — fixture-only product path.
 
 start_mod media-root-folders media-root-folders \
   "${C[@]}" MUXCORE_MODULE_ID=media-root-folders \

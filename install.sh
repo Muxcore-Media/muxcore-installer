@@ -16,7 +16,7 @@ RUN="$ROOT/run"
 require_cmd curl tar uname mkdir chmod
 
 mkdir -p "$BIN" "$CACHE" "$RUN" \
-  "$DATA"/{movies,tvshows,automation,scanner,roots,sqlite,secrets,encryption,library/tv,storage,auth,jellyfin,downloads,request}
+  "$DATA"/{movies,tvshows,automation,scanner,roots,sqlite,secrets,encryption,library/tv,storage,auth,jellyfin,downloads,request,formats,rename,ffprobe,subtitles/files}
 
 read -r OS ARCH < <(detect_os_arch)
 echo "==> platform ${OS}/${ARCH}"
@@ -246,9 +246,10 @@ else
 fi
 echo
 echo "Next:"
+echo "  ./onboard.sh            # guided first-run walkthrough (recommended)"
 echo "  ./up.sh                 # start host stack"
 echo "  ./bootstrap-auth.sh     # create admin + token"
-echo "  ./smoke-fixture.sh      # offline health / fixture notes"
+echo "  ./smoke-fixture.sh      # health check"
 echo "VIEW-ME: $RUN/VIEW-ME.txt"
 if [[ "$ESSENTIAL_OK" -ne 1 ]]; then
   exit 1

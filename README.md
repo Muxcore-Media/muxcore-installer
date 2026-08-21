@@ -1,8 +1,36 @@
 # MuxCore installer
 
-Single-machine install surface for a **fixture-only** laptop demo. Downloads (or copies) `muxcored` + module binaries, lays out data dirs, starts a host stack, bootstraps admin auth, and runs a health smoke — **without** live pirate indexers or BitTorrent.
+Single-machine install surface for a **first-run laptop / homelab demo**. Downloads (or copies) `muxcored` + default platform and media modules, walks you through library paths and admin login, starts a host stack, and runs a health smoke — **without** acquisition/indexer/downloader modules.
 
 This is the end-user path. [`_mvp`](../_mvp) remains a developer reference lab.
+
+## One-line setup (recommended)
+
+Linux or macOS — paste into a terminal:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Muxcore-Media/muxcore-installer/main/get-onboard.sh | bash
+```
+
+From a monorepo checkout:
+
+```bash
+bash get-onboard.sh
+# or
+cd muxcore-installer && ./get-onboard.sh
+```
+
+The guided walkthrough (7 steps):
+
+1. Check prerequisites (curl, tar, Linux/macOS)
+2. Choose install folder
+3. Fetch core + default modules
+4. Metadata — TMDB API key or offline demo mode
+5. Create your admin username/password
+6. Choose movie, TV, and incoming import folders
+7. Optional Jellyfin, start stack, create login, health check
+
+When finished, open **http://localhost:8082** and use the credentials printed in `run/VIEW-ME.txt`.
 
 ## Prerequisites
 
@@ -10,13 +38,13 @@ This is the end-user path. [`_mvp`](../_mvp) remains a developer reference lab.
 |------|-----------|
 | `curl`, `tar`, `bash` | Yes |
 | Go | **Optional** — only if building helper CLIs from sibling sources |
-| Docker | **Optional** — this installer runs **host binaries**, not compose |
+| Docker | **Optional** — only for `MUXCORE_PROFILE=postgres` auto-Postgres |
 | `gh` | Optional — helps download private release assets |
 | Prebuilt module binaries | Via GitHub Releases **or** lab fallback (below) |
 
 Supported OS/arch for release assets: linux/darwin × amd64/arm64.
 
-## Quick start
+## Manual path (skip the wizard)
 
 ```bash
 # 1) Fetch binaries + write .env + VIEW-ME
@@ -28,14 +56,33 @@ Supported OS/arch for release assets: linux/darwin × amd64/arm64.
 # 3) Create admin user + session token (password printed once)
 ./bootstrap-auth.sh
 
-# 4) Health smoke (core required; no pirate APIs)
+# 4) Health smoke
 ./smoke-fixture.sh
 
 # Stop
 ./up.sh stop
 ```
 
+Or run the interactive wizard after install:
+
+```bash
+./onboard.sh
+```
+
 URLs and login defaults are written to `run/VIEW-ME.txt`.
+
+## Default modules
+
+Onboarding installs and starts the official **`default` + `media` spool** modules:
+
+| Layer | Modules |
+|-------|---------|
+| Platform | `muxcored`, `api-rest`, `auth-local`, `database-sqlite`, `secrets-file`, `encryption-aesgcm`, `call-policy-default`, `publish-policy-default`, `cache-local`, `ratelimit-tokenbucket`, `health-monitor`, `admin-ui`, `notification-default` |
+| Media | `metadata-tmdb`, `media-movies`, `media-tvshows`, `media-automation`, `media-scanner`, `media-custom-formats`, `media-rename`, `media-ffprobe`, `media-subtitles`, `media-root-folders`, `request-media`, `jellyfin` |
+
+Acquisition/indexer/downloader modules are **not** part of this installer.
+
+Pins live in [`versions.env`](versions.env). Human-readable matrix + spool sync rule: [`PIN-MATRIX.md`](PIN-MATRIX.md) (`./scripts/check-pin-matrix.sh`).
 
 ## Lab binary fallback (`MUXCORE_LAB_BIN`)
 
@@ -48,26 +95,16 @@ export MUXCORE_LAB_BIN="$HOME/Projects/MuxCore/_mvp/bin"
 
 If `MUXCORE_LAB_BIN` is unset, `install.sh` also tries sibling `../_mvp/bin` when present.
 
-Pins live in [`versions.env`](versions.env). Human-readable matrix + spool sync rule: [`PIN-MATRIX.md`](PIN-MATRIX.md) (`./scripts/check-pin-matrix.sh`).
-
-## Fixture-only policy
-
-Default `.env` (from `.env.example`):
-
-- `DOWNLOADER_ENGINE=fixture`
-- `TMDB_FIXTURE=1`
-- `PIRATEBAY_API_BASE` / `SMOKE_LIVE_ACQUISITION` **unset**
-
-`./up.sh` never starts `indexer-piratebay`. `./smoke-fixture.sh` requires essential binaries in `bin/`, curls core + api health, optionally bootstraps auth, and prints fixture notes — it does **not** call pirate APIs. Exit **non-zero** if binaries are missing or core/api health fails.
-
 ## Scripts
 
 | Script | Role |
 |--------|------|
+| `get-onboard.sh` | One-liner entry (`curl … \| bash`) — fetch installer + run wizard |
+| `onboard.sh` | Interactive 7-step first-run walkthrough |
 | `install.sh` | Download/copy binaries, dirs, `.env`, `run/VIEW-ME.txt` |
 | `up.sh` / `up.sh stop` | Start/stop host processes from `bin/` |
 | `bootstrap-auth.sh` | Admin user via `authctl` + token via `gettoken` |
-| `smoke-fixture.sh` | Binary gate + core/api health + fixture notes (no pirate APIs) |
+| `smoke-fixture.sh` | Binary gate + core/api health (no acquisition modules) |
 
 If `bin/muxcored` is missing, `up.sh` fails with a clear message pointing at `install.sh` / `MUXCORE_LAB_BIN`.
 
@@ -99,7 +136,7 @@ Starts `metrics-prometheus` (`:9901` scrape) and `tracing-otlp` when present in 
 
 ```
 bin/           # muxcored + modules + authctl/gettoken
-data/          # sqlite, auth, library, downloads, …
+data/          # sqlite, auth, library, incoming imports, …
 run/           # pid/log files, VIEW-ME.txt, admin.token
 policies/      # call + publish policy YAML
 muxcore.json   # core config
