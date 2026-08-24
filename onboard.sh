@@ -11,7 +11,7 @@ TOTAL_STEPS=7
 # shellcheck disable=SC1091
 source "$ROOT/lib/common.sh"
 # shellcheck disable=SC1091
-source "$ROOT/lib/forgejo.sh"
+source "$ROOT/lib/github.sh"
 
 die() { echo "error: $*" >&2; exit 1; }
 info() { echo "==> $*"; }
@@ -52,10 +52,10 @@ step_prerequisites() {
   if command -v docker >/dev/null 2>&1; then
     ok "Docker found (optional — not required for this path)"
   fi
-  if forgejo_token >/dev/null 2>&1; then
-    ok "Forgejo token found (downloads private release assets from git.zem.systems)"
+  if github_token >/dev/null 2>&1; then
+    ok "GitHub token found (downloads private releases from github.com/Muxcore-Media)"
   else
-    ok "no Forgejo token — public release assets only (set FORGEJO_TOKEN or ~/.config/muxcore/forgejo.token)"
+    ok "no GitHub token — set GITHUB_TOKEN or ~/.config/muxcore/github.token for private repos"
   fi
 }
 
