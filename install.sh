@@ -172,6 +172,9 @@ for h in $HELPER_BINS; do
         fi
         ;;
       gettoken)
+        if try_release_asset "muxcorectl-cli" "v0.1.0" gettoken gettoken; then
+          continue
+        fi
         if [[ -d "$ROOT/../_mvp/cmd/gettoken" ]]; then
           echo "  - building gettoken from sibling _mvp"
           (cd "$ROOT/../_mvp" && go build -o "$BIN/gettoken" ./cmd/gettoken)
