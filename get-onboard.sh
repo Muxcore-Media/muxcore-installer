@@ -1,15 +1,34 @@
 #!/usr/bin/env bash
 # One-liner entrypoint for MuxCore guided onboarding.
 # Usage:
-#   curl -fsSL https://git.zem.systems/muxcore/muxcore-installer/raw/branch/main/get-onboard.sh | bash
+#   curl -fsSL https://getmuxcore.zem.systems | bash
+#   GITHUB_TOKEN=ghp_... curl -fsSL https://getmuxcore.zem.systems | bash
 #   bash get-onboard.sh
 set -euo pipefail
 
-MUXCORE_INSTALLER_REPO="${MUXCORE_INSTALLER_REPO:-https://git.zem.systems/muxcore/muxcore-installer}"
+MUXCORE_INSTALLER_REPO="${MUXCORE_INSTALLER_REPO:-Muxcore-Media/muxcore-installer}"
 MUXCORE_INSTALLER_REF="${MUXCORE_INSTALLER_REF:-main}"
 DEFAULT_INSTALL_DIR="${MUXCORE_INSTALL_DIR:-$HOME/muxcore}"
+GITHUB_ORG="${MUXCORE_GITHUB_ORG:-Muxcore-Media}"
 
 die() { echo "error: $*" >&2; exit 1; }
+
+github_token() {
+  if [[ -n "${GITHUB_TOKEN:-}" ]]; then printf '%s' "$GITHUB_TOKEN"; return 0; fi
+  if [[ -n "${GH_TOKEN:-}" ]]; then printf '%s' "$GH_TOKEN"; return 0; fi
+  if [[ -f "$HOME/.config/muxcore/github.token" ]]; then tr -d '[:space:]' <"$HOME/.config/muxcore/github.token"; return 0; fi
+  if command -v gh >/dev/null 2>&1; then gh auth token 2>/dev/null && return 0; fi
+  return 1
+}
+
+github_authed_curl() {
+  local url="$1" dest="$2" token
+  if token="$(github_token 2>/dev/null || true)" && [[ -n "$token" ]]; then
+    curl -fsSL -H "Authorization: Bearer ${token}" -o "$dest" "$url"
+  else
+    curl -fsSL -o "$dest" "$url"
+  fi
+}
 
 detect_os() {
   local os
@@ -58,6 +77,14 @@ find_local_installer() {
 fetch_installer() {
   local dest="$1"
   mkdir -p "$dest"
+  local token clone_url
+  token="$(github_token 2>/dev/null || true)"
+  if [[ -n "$token" ]]; then
+    clone_url="https://x-access-token:${token}@github.com/${MUXCORE_INSTALLER_REPO}.git"
+  else
+    clone_url="https://github.com/${MUXCORE_INSTALLER_REPO}.git"
+  fi
+
   if command -v git >/dev/null 2>&1; then
     if [[ -d "$dest/.git" ]]; then
       echo "==> updating installer in $dest"
@@ -66,8 +93,8 @@ fetch_installer() {
       git -C "$dest" pull --ff-only origin "$MUXCORE_INSTALLER_REF" >/dev/null 2>&1 || true
       return 0
     fi
-    echo "==> cloning $MUXCORE_INSTALLER_REPO ($MUXCORE_INSTALLER_REF) → $dest"
-    git clone --depth 1 --branch "$MUXCORE_INSTALLER_REF" "$MUXCORE_INSTALLER_REPO" "$dest"
+    echo "==> cloning ${MUXCORE_INSTALLER_REPO} (${MUXCORE_INSTALLER_REF}) → $dest"
+    git clone --depth 1 --branch "$MUXCORE_INSTALLER_REF" "$clone_url" "$dest"
     return 0
   fi
 
@@ -75,16 +102,10 @@ fetch_installer() {
   command -v tar >/dev/null 2>&1 || die "need tar to extract the installer"
   local tmp archive="muxcore-installer-${MUXCORE_INSTALLER_REF}.tar.gz"
   tmp="$(mktemp -d "${TMPDIR:-/tmp}/muxcore-onboard.XXXXXX")"
-  echo "==> downloading installer archive"
-  local url
-  for url in \
-    "${MUXCORE_INSTALLER_REPO}/archive/${MUXCORE_INSTALLER_REF}.tar.gz" \
-    "${MUXCORE_INSTALLER_REPO}/archive/refs/heads/${MUXCORE_INSTALLER_REF}.tar.gz"; do
-    if curl -fsSL "$url" -o "$tmp/$archive"; then
-      break
-    fi
-  done
-  [[ -s "$tmp/$archive" ]] || die "could not download installer archive from $MUXCORE_INSTALLER_REPO"
+  echo "==> downloading installer archive from GitHub"
+  github_authed_curl \
+    "https://api.github.com/repos/${MUXCORE_INSTALLER_REPO}/tarball/${MUXCORE_INSTALLER_REF}" \
+    "$tmp/$archive" || die "could not download installer (set GITHUB_TOKEN for private repos)"
   tar -xzf "$tmp/$archive" -C "$tmp"
   local extracted
   extracted="$(find "$tmp" -mindepth 1 -maxdepth 1 -type d | head -1)"
