@@ -10,6 +10,8 @@ TOTAL_STEPS=7
 
 # shellcheck disable=SC1091
 source "$ROOT/lib/common.sh"
+# shellcheck disable=SC1091
+source "$ROOT/lib/forgejo.sh"
 
 die() { echo "error: $*" >&2; exit 1; }
 info() { echo "==> $*"; }
