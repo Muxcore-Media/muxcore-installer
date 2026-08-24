@@ -34,7 +34,7 @@ if ((${#MISSING[@]})); then
 FAIL: missing binaries in $BIN: ${MISSING[*]}
 
 The full stack cannot start without module binaries.
-Place GitHub Release binaries into bin/ (preferred), or:
+Place Forgejo Release binaries into bin/ (preferred), or:
 
   export MUXCORE_LAB_BIN=/path/to/MuxCore/_mvp/bin
   ./install.sh

@@ -9,7 +9,7 @@ This is the end-user path. [`_mvp`](../_mvp) remains a developer reference lab.
 Linux or macOS — paste into a terminal:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Muxcore-Media/muxcore-installer/main/get-onboard.sh | bash
+curl -fsSL https://git.zem.systems/muxcore/muxcore-installer/raw/branch/main/get-onboard.sh | bash
 ```
 
 From a monorepo checkout:
@@ -39,8 +39,8 @@ When finished, open **http://localhost:8082** and use the credentials printed in
 | `curl`, `tar`, `bash` | Yes |
 | Go | **Optional** — only if building helper CLIs from sibling sources |
 | Docker | **Optional** — only for `MUXCORE_PROFILE=postgres` auto-Postgres |
-| `gh` | Optional — helps download private release assets |
-| Prebuilt module binaries | Via GitHub Releases **or** lab fallback (below) |
+| Forgejo token | **Optional** — `FORGEJO_TOKEN` or `~/.config/muxcore/forgejo.token` for private release assets |
+| Prebuilt module binaries | Via Forgejo Releases (`git.zem.systems/muxcore/*`) **or** lab fallback (below) |
 
 Supported OS/arch for release assets: linux/darwin × amd64/arm64.
 
@@ -86,7 +86,7 @@ Pins live in [`versions.env`](versions.env). Human-readable matrix + spool sync 
 
 ## Lab binary fallback (`MUXCORE_LAB_BIN`)
 
-Many modules do not publish GitHub Release binary assets yet. Point the installer at a directory of built binaries (typically the laptop lab):
+Many modules do not publish Forgejo Release binary assets yet. Point the installer at a directory of built binaries (typically the laptop lab):
 
 ```bash
 export MUXCORE_LAB_BIN="$HOME/Projects/MuxCore/_mvp/bin"

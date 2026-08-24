@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # One-liner entrypoint for MuxCore guided onboarding.
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/Muxcore-Media/muxcore-installer/main/get-onboard.sh | bash
+#   curl -fsSL https://git.zem.systems/muxcore/muxcore-installer/raw/branch/main/get-onboard.sh | bash
 #   bash get-onboard.sh
 set -euo pipefail
 
-MUXCORE_INSTALLER_REPO="${MUXCORE_INSTALLER_REPO:-https://github.com/Muxcore-Media/muxcore-installer}"
+MUXCORE_INSTALLER_REPO="${MUXCORE_INSTALLER_REPO:-https://git.zem.systems/muxcore/muxcore-installer}"
 MUXCORE_INSTALLER_REF="${MUXCORE_INSTALLER_REF:-main}"
 DEFAULT_INSTALL_DIR="${MUXCORE_INSTALL_DIR:-$HOME/muxcore}"
 
@@ -76,9 +76,15 @@ fetch_installer() {
   local tmp archive="muxcore-installer-${MUXCORE_INSTALLER_REF}.tar.gz"
   tmp="$(mktemp -d "${TMPDIR:-/tmp}/muxcore-onboard.XXXXXX")"
   echo "==> downloading installer archive"
-  curl -fsSL \
-    "${MUXCORE_INSTALLER_REPO}/archive/refs/heads/${MUXCORE_INSTALLER_REF}.tar.gz" \
-    -o "$tmp/$archive"
+  local url
+  for url in \
+    "${MUXCORE_INSTALLER_REPO}/archive/${MUXCORE_INSTALLER_REF}.tar.gz" \
+    "${MUXCORE_INSTALLER_REPO}/archive/refs/heads/${MUXCORE_INSTALLER_REF}.tar.gz"; do
+    if curl -fsSL "$url" -o "$tmp/$archive"; then
+      break
+    fi
+  done
+  [[ -s "$tmp/$archive" ]] || die "could not download installer archive from $MUXCORE_INSTALLER_REPO"
   tar -xzf "$tmp/$archive" -C "$tmp"
   local extracted
   extracted="$(find "$tmp" -mindepth 1 -maxdepth 1 -type d | head -1)"
