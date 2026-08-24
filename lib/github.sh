@@ -62,3 +62,19 @@ github_api_curl() {
     curl -fsSL -H "Accept: application/vnd.github+json" "$@"
   fi
 }
+
+github_download_release_asset() {
+  local repo="$1" tag="$2" asset_name="$3" dest="$4"
+  local token asset_id
+  token="$(github_token 2>/dev/null || true)"
+  [[ -n "$token" ]] || return 1
+  asset_id="$(github_api_curl \
+    "https://api.github.com/repos/$(github_org)/${repo}/releases/tags/${tag}" \
+    | jq -r --arg n "$asset_name" '.assets[]? | select(.name == $n) | .id' | head -1)"
+  [[ -n "$asset_id" && "$asset_id" != null ]] || return 1
+  curl -fsSL \
+    -H "Authorization: Bearer ${token}" \
+    -H "Accept: application/octet-stream" \
+    -o "$dest" \
+    "https://api.github.com/repos/$(github_org)/${repo}/releases/assets/${asset_id}"
+}

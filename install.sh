@@ -100,13 +100,22 @@ try_release_asset() {
   local asset url dest
   for asset in "${candidates[@]}"; do
     dest="$CACHE/${repo}-${tag}-${asset}"
-    url="$(github_release_download_url "$repo" "$tag" "$asset")"
-    if download_url "$url" "$dest"; then
-      if extract_binary_from_tarball "$dest" "$bin_name"; then
-        return 0
-      fi
-      echo "    WARN: tarball $asset had no usable binary named $bin_name" >&2
+    if [[ -f "$dest" ]]; then
+      echo "    cached $(basename "$dest")"
+    elif github_download_release_asset "$repo" "$tag" "$asset" "$dest.partial" 2>/dev/null \
+      && mv "$dest.partial" "$dest"; then
+      echo "    downloaded $(basename "$dest")"
+    elif url="$(github_release_download_url "$repo" "$tag" "$asset")" \
+      && download_url "$url" "$dest"; then
+      :
+    else
+      rm -f "$dest.partial"
+      continue
     fi
+    if extract_binary_from_tarball "$dest" "$bin_name"; then
+      return 0
+    fi
+    echo "    WARN: tarball $asset had no usable binary named $bin_name" >&2
   done
   return 1
 }
