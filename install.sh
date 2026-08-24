@@ -6,6 +6,8 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck disable=SC1091
 source "$ROOT/lib/common.sh"
 # shellcheck disable=SC1091
+source "$ROOT/lib/forgejo.sh"
+# shellcheck disable=SC1091
 source "$ROOT/versions.env"
 
 BIN="$ROOT/bin"
@@ -21,16 +23,13 @@ mkdir -p "$BIN" "$CACHE" "$RUN" \
 read -r OS ARCH < <(detect_os_arch)
 echo "==> platform ${OS}/${ARCH}"
 
-gh_available() { command -v gh >/dev/null 2>&1; }
-
 download_url() {
   local url="$1" dest="$2"
   if [[ -f "$dest" ]]; then
     echo "    cached $(basename "$dest")"
     return 0
   fi
-  # Quiet on 404 (private repos / missing assets); caller tries gh + lab fallback.
-  if curl -fsSL -o "$dest.partial" "$url" 2>/dev/null; then
+  if forgejo_curl -o "$dest.partial" "$url" 2>/dev/null; then
     mv "$dest.partial" "$dest"
     echo "    downloaded $(basename "$dest")"
     return 0
@@ -76,32 +75,10 @@ try_release_asset() {
     "${bin_name}_${OS}_${ARCH}.tar.gz"
   )
 
-  # Prefer gh for private Muxcore-Media releases (curl gets 404 without token).
-  if gh_available; then
-    local ghtmp
-    ghtmp="$(mktemp -d "$CACHE/gh.XXXXXX")"
-    if gh release download "$tag" --repo "$repo" --dir "$ghtmp" -p "*${OS}_${ARCH}*" >/dev/null 2>&1 \
-      || gh release download "$tag" --repo "$repo" --dir "$ghtmp" -p "*.tar.gz" >/dev/null 2>&1; then
-      local tarball
-      tarball="$(find "$ghtmp" -type f \( -name '*.tar.gz' -o -name '*.tgz' \) | head -1 || true)"
-      if [[ -n "$tarball" ]] && extract_binary_from_tarball "$tarball" "$bin_name"; then
-        rm -rf "$ghtmp"
-        return 0
-      fi
-      if [[ -f "$ghtmp/$bin_name" ]]; then
-        install -m 0755 "$ghtmp/$bin_name" "$BIN/$bin_name"
-        rm -rf "$ghtmp"
-        echo "    installed bin/$bin_name (gh asset)"
-        return 0
-      fi
-    fi
-    rm -rf "$ghtmp"
-  fi
-
   local asset url dest
   for asset in "${candidates[@]}"; do
-    dest="$CACHE/${repo##*/}-${tag}-${asset}"
-    url="https://github.com/${repo}/releases/download/${tag}/${asset}"
+    dest="$CACHE/${repo}-${tag}-${asset}"
+    url="$(forgejo_release_download_url "$repo" "$tag" "$asset")"
     if download_url "$url" "$dest"; then
       if extract_binary_from_tarball "$dest" "$bin_name"; then
         return 0
@@ -149,7 +126,7 @@ while IFS= read -r line; do
     echo "    already present"
     continue
   fi
-  if try_release_asset "Muxcore-Media/${repo_name}" "$tag" "$repo_name" "$bin_name"; then
+  if try_release_asset "$repo_name" "$tag" "$repo_name" "$bin_name"; then
     continue
   fi
   if copy_from_lab "$bin_name"; then
@@ -157,7 +134,7 @@ while IFS= read -r line; do
     continue
   fi
   MISSING+=("$bin_name@$tag")
-  echo "    MISSING: no GitHub Release binary for ${repo_name}@${tag} and no lab bin" >&2
+  echo "    MISSING: no Forgejo Release binary for ${repo_name}@${tag} and no lab bin" >&2
 done <<<"$MODULES"
 
 AUTH_LOCAL_TAG=""
@@ -177,7 +154,7 @@ for h in $HELPER_BINS; do
   fi
   # authctl may ship inside auth-local release later
   if [[ "$h" == authctl && -n "$AUTH_LOCAL_TAG" ]] \
-    && try_release_asset "Muxcore-Media/auth-local" "$AUTH_LOCAL_TAG" authctl authctl; then
+    && try_release_asset "auth-local" "$AUTH_LOCAL_TAG" authctl authctl; then
     continue
   fi
   if copy_from_lab "$h"; then
@@ -233,7 +210,7 @@ echo "bin:      $BIN"
 echo "platform: ${OS}/${ARCH}"
 if ((${#LAB_COPIED[@]})); then
   echo "lab copies: ${LAB_COPIED[*]}"
-  echo "  (module GitHub Releases often lack binary assets yet — lab bins are OK for laptop demo)"
+  echo "  (module Forgejo Releases often lack binary assets yet — lab bins are OK for laptop demo)"
 fi
 if ((${#MISSING[@]})); then
   echo "MISSING:  ${MISSING[*]}"

@@ -50,8 +50,10 @@ step_prerequisites() {
   if command -v docker >/dev/null 2>&1; then
     ok "Docker found (optional — not required for this path)"
   fi
-  if command -v gh >/dev/null 2>&1; then
-    ok "GitHub CLI found (helps fetch private release assets)"
+  if forgejo_token >/dev/null 2>&1; then
+    ok "Forgejo token found (downloads private release assets from git.zem.systems)"
+  else
+    ok "no Forgejo token — public release assets only (set FORGEJO_TOKEN or ~/.config/muxcore/forgejo.token)"
   fi
 }
 
