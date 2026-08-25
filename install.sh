@@ -20,6 +20,11 @@ require_cmd curl tar uname mkdir chmod
 mkdir -p "$BIN" "$CACHE" "$RUN" \
   "$DATA"/{movies,tvshows,automation,scanner,roots,sqlite,secrets,encryption,library/tv,storage,auth,jellyfin,downloads,request,formats,rename,ffprobe,subtitles/files}
 
+if ! ensure_writable_dir "$BIN" 2>/dev/null; then
+  echo "error: cannot write to $BIN (permission denied)" >&2
+  exit 1
+fi
+
 read -r OS ARCH < <(detect_os_arch)
 echo "==> platform ${OS}/${ARCH}"
 
