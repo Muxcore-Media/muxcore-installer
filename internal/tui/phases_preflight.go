@@ -29,6 +29,10 @@ func (m *Model) initPreflight() {
 			m.preflightBusy = append(m.preflightBusy, p.name+" (:"+p.port+")")
 		}
 	}
+	// docker compose version succeeds without a running daemon, so the
+	// runtime step's own check can miss a stopped daemon — catch it here
+	// too, right before we'd otherwise fail deep inside `docker compose up`.
+	m.preflightDockerBad = m.answers.Runtime == "compose" && !prereqs.HaveDocker()
 	m.preflightDone = true
 	m.phase = phasePreflight
 }
@@ -41,6 +45,11 @@ func (m *Model) updatePreflightPhase(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch km.String() {
 	case "q":
 		return m, quitCmd()
+	case "r":
+		if m.preflightDockerBad {
+			m.initRuntimeKeep()
+		}
+		return m, nil
 	case "enter", "c":
 		m.initSummary()
 	}
@@ -48,13 +57,22 @@ func (m *Model) updatePreflightPhase(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) viewPreflight() string {
-	if len(m.preflightBusy) == 0 {
+	if len(m.preflightBusy) == 0 && !m.preflightDockerBad {
 		return styleOK.Render("✓ All the ports MuxCore needs are free.") + "\n\n" + styleHint.Render("enter continue")
 	}
-	body := styleWarn.Render("⚠ Something is already listening on:") + "\n"
-	for _, b := range m.preflightBusy {
-		body += "  • " + b + "\n"
+	var body string
+	if m.preflightDockerBad {
+		body += styleErr.Render("✗ Docker Compose is selected, but Docker's daemon isn't reachable.") + "\n"
+		body += "  Start Docker (Docker Desktop, or `sudo systemctl start docker`), then continue —\n"
+		body += "  or press " + styleFieldEdit.Render("r") + " to go back and run MuxCore as host processes instead.\n\n"
 	}
-	body += "\n" + styleHint.Render("MuxCore may fail to start until that's freed up. You can continue anyway and fix it after — enter continue")
+	if len(m.preflightBusy) > 0 {
+		body += styleWarn.Render("⚠ Something is already listening on:") + "\n"
+		for _, b := range m.preflightBusy {
+			body += "  • " + b + "\n"
+		}
+		body += "\n" + styleHint.Render("MuxCore may fail to start until that's freed up.") + "\n"
+	}
+	body += "\n" + styleHint.Render("enter continue anyway"+map[bool]string{true: "  ·  r change runtime", false: ""}[m.preflightDockerBad])
 	return body
 }
