@@ -146,10 +146,22 @@ EOF
 }
 
 onboard_step() {
+  if [[ -n "${GUM_BIN:-}" ]] && [[ -f "${UI_ROOT:-}/lib/ui.sh" || -f "$(dirname "${BASH_SOURCE[0]}")/ui.sh" ]]; then
+    # shellcheck disable=SC1091
+    source "$(dirname "${BASH_SOURCE[0]}")/ui.sh"
+    ui_step "$@"
+    return
+  fi
   printf '\n── Step %s/%s — %s ──\n' "$1" "$2" "$3"
 }
 
 onboard_prompt() {
+  if [[ -n "${GUM_BIN:-}" ]]; then
+    # shellcheck disable=SC1091
+    source "$(dirname "${BASH_SOURCE[0]}")/ui.sh"
+    ui_input "$@"
+    return
+  fi
   local var="$1" q="$2" def="${3:-}" ans
   onboard_require_tty
   if [[ -n "$def" ]]; then
@@ -162,6 +174,12 @@ onboard_prompt() {
 }
 
 onboard_prompt_secret() {
+  if [[ -n "${GUM_BIN:-}" ]]; then
+    # shellcheck disable=SC1091
+    source "$(dirname "${BASH_SOURCE[0]}")/ui.sh"
+    ui_input_secret "$@"
+    return
+  fi
   local var="$1" q="$2" def="${3:-}" ans
   onboard_require_tty
   if [[ -n "$def" ]]; then
@@ -177,6 +195,17 @@ onboard_prompt_secret() {
 }
 
 onboard_yesno() {
+  if [[ -n "${GUM_BIN:-}" ]]; then
+    # shellcheck disable=SC1091
+    source "$(dirname "${BASH_SOURCE[0]}")/ui.sh"
+    local def="${2:-y}"
+    if [[ "$def" =~ ^[Yy] ]]; then
+      ui_confirm "$1" true
+    else
+      ui_confirm "$1" false
+    fi
+    return
+  fi
   local q="$1" def="${2:-y}" ans
   onboard_require_tty
   read -r -u "$_ONBOARD_READ_FD" -p "$q [$def]: " ans || true
