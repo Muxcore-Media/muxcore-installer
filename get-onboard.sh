@@ -148,7 +148,7 @@ verify_sha256() {
   if [[ "$got" != "$want" ]]; then
     die "checksum mismatch for $name (got $got want $want)"
   fi
-  echo "==> checksum ok ($name)"
+  echo "==> checksum ok ($name)" >&2
 }
 
 extract_and_find() {
@@ -179,7 +179,7 @@ fetch_installer() {
   sums="$cache/SHA256SUMS"
 
   url="https://github.com/${INSTALLER_REPO}/releases/download/${INSTALLER_TAG}/muxcore-installer_${ver}_${os}_${arch}.tar.gz"
-  echo "==> fetching MuxCore installer ${INSTALLER_TAG}"
+  echo "==> fetching MuxCore installer ${INSTALLER_TAG}" >&2
   if curl_auth -o "$tarball" "$url" 2>/dev/null; then
     curl_auth -o "$sums" \
       "https://github.com/${INSTALLER_REPO}/releases/download/${INSTALLER_TAG}/SHA256SUMS" \
@@ -190,13 +190,13 @@ fetch_installer() {
     extract_and_find "$tarball" "$dest" && return 0
   fi
 
-  echo "==> release tarball unavailable; trying GitHub archive ${INSTALLER_TAG}"
+  echo "==> release tarball unavailable; trying GitHub archive ${INSTALLER_TAG}" >&2
   url="https://github.com/${INSTALLER_REPO}/archive/refs/tags/${INSTALLER_TAG}.tar.gz"
   if curl_auth -o "$tarball" "$url" 2>/dev/null; then
     extract_and_find "$tarball" "$dest" && return 0
   fi
 
-  echo "==> tag archive unavailable; trying main"
+  echo "==> tag archive unavailable; trying main" >&2
   url="https://codeload.github.com/${GITHUB_ORG}/muxcore-installer/tar.gz/refs/heads/main"
   if curl_auth -o "$tarball" "$url" 2>/dev/null; then
     extract_and_find "$tarball" "$dest" && return 0
