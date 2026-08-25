@@ -9,17 +9,28 @@ on:
 permissions: read-all
 
 jobs:
-  scripts:
-    name: Shell syntax
+  build:
+    name: Build, vet, dry-run
     runs-on: self-hosted
     steps:
       - name: Clean runner workspace
         run: rm -rf "${GITHUB_WORKSPACE}/"* "${RUNNER_TEMP}/"* 2>/dev/null; true
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - name: shellcheck or bash -n
+      - name: go build / vet / gofmt
         run: |
           set -euo pipefail
-          scripts=(get-onboard.sh onboard.sh install.sh up.sh bootstrap-auth.sh smoke-fixture.sh lib/common.sh lib/github.sh lib/ui.sh lib/prereqs.sh lib/paths.sh lib/modules.sh lib/seed-roots.sh lib/compose.sh)
+          go build ./...
+          go vet ./...
+          unformatted="$(gofmt -l .)"
+          if [[ -n "$unformatted" ]]; then
+            echo "gofmt needs to be run on:" >&2
+            echo "$unformatted" >&2
+            exit 1
+          fi
+      - name: shellcheck embedded scripts
+        run: |
+          set -euo pipefail
+          scripts=(get-onboard.sh up.sh bootstrap-auth.sh smoke-fixture.sh lib/common.sh lib/modules.sh)
           if command -v shellcheck >/dev/null 2>&1; then
             echo "==> shellcheck ${scripts[*]}"
             shellcheck -x "${scripts[@]}"
@@ -30,5 +41,10 @@ jobs:
               bash -n "$s"
             done
           fi
-          echo "==> non-interactive dry-run"
-          MUXCORE_I_AGREE=1 MUXCORE_NONINTERACTIVE=1 MUXCORE_DRY_RUN=1 bash onboard.sh
+      - name: non-interactive dry-run
+        run: |
+          set -euo pipefail
+          go build -o /tmp/muxcore-setup ./cmd/muxcore-setup
+          rm -rf "$RUNNER_TEMP/muxcore-dry-run" && mkdir -p "$RUNNER_TEMP/muxcore-dry-run"
+          cd "$RUNNER_TEMP/muxcore-dry-run"
+          MUXCORE_I_AGREE=1 MUXCORE_NONINTERACTIVE=1 MUXCORE_DRY_RUN=1 /tmp/muxcore-setup

@@ -5,4 +5,6 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 export MUXCORE_I_AGREE=1
 export MUXCORE_NONINTERACTIVE=1
 export MUXCORE_DRY_RUN=1
-exec bash "$ROOT/onboard.sh"
+cd "$ROOT"
+go build -o /tmp/muxcore-setup-dryrun ./cmd/muxcore-setup
+exec /tmp/muxcore-setup-dryrun
