@@ -52,6 +52,18 @@ ui_gum() {
   return 127
 }
 
+# Run gum only when available; never call invalid subcommands (e.g. "gum true").
+ui_gum_available() {
+  ui_fix_term
+  [[ "${TERM:-}" == dumb ]] && return 1
+  ui_gum --version &>/dev/null
+}
+
+ui_gum_style() {
+  ui_gum_available || return 1
+  ui_gum style "$@"
+}
+
 ui_clear() {
   ui_fix_term
   if ui_term_works; then
@@ -62,13 +74,13 @@ ui_clear() {
 
 ui_splash() {
   ui_clear
-  if ui_gum style --foreground 212 --bold <"$UI_BANNER" 2>/dev/null; then
+  if ui_gum_style --foreground 212 --bold "$(cat "$UI_BANNER")" 2>/dev/null; then
     :
   else
     cat "$UI_BANNER"
   fi
   echo
-  ui_gum style --foreground 240 "Personal media library setup for Linux and macOS" 2>/dev/null \
+  ui_gum_style --foreground 240 "Personal media library setup for Linux and macOS" 2>/dev/null \
     || echo "Personal media library setup for Linux and macOS"
   echo
 }
@@ -76,31 +88,25 @@ ui_splash() {
 ui_step() {
   local n="$1" total="$2" title="$3"
   echo
-  ui_gum style --bold "Step ${n} of ${total} — ${title}" 2>/dev/null \
+  ui_gum_style --bold "Step ${n} of ${total} — ${title}" 2>/dev/null \
     || printf '\n── Step %s/%s — %s ──\n' "$n" "$total" "$title"
 }
 
 ui_info() {
-  ui_gum style --foreground 36 "$*" 2>/dev/null || echo "==> $*"
+  ui_gum_style --foreground 36 "$*" 2>/dev/null || echo "==> $*"
 }
 
 ui_ok() {
-  ui_gum style --foreground 42 "✓ $*" 2>/dev/null || echo "    $*"
+  ui_gum_style --foreground 42 "✓ $*" 2>/dev/null || echo "    $*"
 }
 
 ui_warn() {
-  ui_gum style --foreground 214 "⚠ $*" 2>/dev/null || echo "WARN: $*" >&2
+  ui_gum_style --foreground 214 "⚠ $*" 2>/dev/null || echo "WARN: $*" >&2
 }
 
 ui_die() {
-  ui_gum style --foreground 196 --bold "error: $*" 2>/dev/null || echo "error: $*" >&2
+  ui_gum_style --foreground 196 --bold "error: $*" 2>/dev/null || echo "error: $*" >&2
   exit 1
-}
-
-ui_gum_available() {
-  ui_fix_term
-  [[ "${TERM:-}" == dumb ]] && return 1
-  ui_gum true 2>/dev/null
 }
 
 ui_confirm() {
@@ -146,14 +152,14 @@ By continuing, you agree to use MuxCore only with lawfully obtained media.
 EOF
 )"
   ui_clear
-  if ui_gum_available && ui_gum style --bold <"$UI_BANNER" 2>/dev/null; then
+  if ui_gum_available && ui_gum_style --bold "$(cat "$UI_BANNER")" 2>/dev/null; then
     echo
   else
     cat "$UI_BANNER"
     echo
   fi
   if ui_gum_available; then
-    ui_gum style --border double --padding "1 2" --width 72 "$text" 2>/dev/null || printf '%s\n' "$text"
+    ui_gum_style --border double --padding "1 2" --width 72 "$text" 2>/dev/null || printf '%s\n' "$text"
     echo
     if ui_gum confirm --default=false --affirmative "I agree" --negative "Exit setup" \
       "I agree — I will only use MuxCore with media I have the right to use"; then
@@ -325,7 +331,7 @@ ui_pick_directory() {
 ui_success() {
   local msg="$1"
   echo
-  ui_gum style --border rounded --padding "1 2" --foreground 42 "$msg" 2>/dev/null || echo "$msg"
+  ui_gum_style --border rounded --padding "1 2" --foreground 42 "$msg" 2>/dev/null || echo "$msg"
   echo
 }
 
