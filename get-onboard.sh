@@ -30,7 +30,7 @@ bootstrap_open_tty() {
 bootstrap_prompt() {
   local var="$1" q="$2" def="${3:-}" ans
   bootstrap_open_tty
-  read -r -p "$q [$def]: " ans -u "$_BOOTSTRAP_READ_FD" || true
+  read -r -u "$_BOOTSTRAP_READ_FD" -p "$q [$def]: " ans || true
   printf -v "$var" '%s' "${ans:-$def}"
 }
 
@@ -127,11 +127,16 @@ fetch_installer() {
   if command -v git >/dev/null 2>&1; then
     if [[ -d "$dest/.git" ]]; then
       echo "==> updating installer in $dest"
-      git -C "$dest" fetch --depth 1 origin "$MUXCORE_INSTALLER_REF" >/dev/null 2>&1 \
-        || die "git fetch failed (check GITHUB_TOKEN for private repos)"
-      git -C "$dest" checkout "$MUXCORE_INSTALLER_REF" >/dev/null 2>&1 || true
-      git -C "$dest" pull --ff-only origin "$MUXCORE_INSTALLER_REF" >/dev/null 2>&1 \
-        || die "git pull failed in $dest"
+      if ! git -C "$dest" fetch --depth 1 origin "$MUXCORE_INSTALLER_REF" >/dev/null 2>&1; then
+        die "git fetch failed (check GITHUB_TOKEN for private repos)"
+      fi
+      if ! git -C "$dest" checkout -q "$MUXCORE_INSTALLER_REF" 2>/dev/null \
+        && ! git -C "$dest" checkout -q -B "$MUXCORE_INSTALLER_REF" "origin/$MUXCORE_INSTALLER_REF" 2>/dev/null; then
+        die "git checkout failed in $dest"
+      fi
+      if ! git -C "$dest" reset --hard "origin/$MUXCORE_INSTALLER_REF" >/dev/null 2>&1; then
+        die "git reset failed in $dest (permission denied?)"
+      fi
       return 0
     fi
     echo "==> cloning ${MUXCORE_INSTALLER_REPO} (${MUXCORE_INSTALLER_REF}) → $dest"
