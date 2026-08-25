@@ -12,6 +12,34 @@ ui_noninteractive() {
   [[ "${MUXCORE_NONINTERACTIVE:-}" == 1 ]]
 }
 
+ui_term_works() {
+  command -v tput >/dev/null 2>&1 && tput cols >/dev/null 2>&1
+}
+
+# SSH from Kitty/macOS often sets TERM=xterm-kitty; minimal containers lack that entry.
+ui_fix_term() {
+  [[ "${MUXCORE_TERM_FIXED:-}" == 1 ]] && return 0
+  local orig="${TERM:-}" candidates=() t
+  [[ -n "${MUXCORE_TERM:-}" ]] && candidates+=("$MUXCORE_TERM")
+  [[ -n "$orig" ]] && candidates+=("$orig")
+  candidates+=(xterm-256color xterm screen linux dumb)
+  for t in "${candidates[@]}"; do
+    TERM="$t"
+    export TERM
+    if ui_term_works; then
+      MUXCORE_TERM_FIXED=1
+      export MUXCORE_TERM_FIXED
+      if [[ -n "$orig" && "$t" != "$orig" ]]; then
+        echo "note: using TERM=$t ($orig is not available on this host)" >&2
+      fi
+      return 0
+    fi
+  done
+  export TERM=dumb
+  MUXCORE_TERM_FIXED=1
+  export MUXCORE_TERM_FIXED
+}
+
 ui_gum() {
   if [[ -n "${GUM_BIN:-}" && -x "$GUM_BIN" ]]; then
     "$GUM_BIN" "$@"
@@ -25,11 +53,11 @@ ui_gum() {
 }
 
 ui_clear() {
-  if command -v tput >/dev/null 2>&1; then
-    tput clear 2>/dev/null || clear
-  else
-    clear 2>/dev/null || printf '\033[2J\033[H'
+  ui_fix_term
+  if ui_term_works; then
+    tput clear 2>/dev/null && return 0
   fi
+  clear 2>/dev/null || printf '\033[2J\033[H' || true
 }
 
 ui_splash() {
@@ -70,6 +98,8 @@ ui_die() {
 }
 
 ui_gum_available() {
+  ui_fix_term
+  [[ "${TERM:-}" == dumb ]] && return 1
   ui_gum true 2>/dev/null
 }
 
@@ -218,7 +248,11 @@ ui_spin() {
     return $?
   fi
   if ui_gum_available; then
-    ui_gum spin --spinner dot --title "$title" --show-output -- "$@"
+    ui_gum spin --spinner dot --title "$title" --show-output -- "$@" || {
+      ui_warn "Falling back to plain output (terminal UI unavailable)"
+      echo "==> $title"
+      "$@"
+    }
   else
     echo "==> $title"
     "$@"

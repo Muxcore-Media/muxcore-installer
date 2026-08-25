@@ -201,6 +201,20 @@ prereqs_offer_docker() {
   esac
 }
 
+prereqs_ensure_terminfo() {
+  ui_fix_term
+  ui_term_works && return 0
+  case "$(prereqs_os_family)" in
+    debian)
+      if command -v sudo >/dev/null 2>&1 && ui_confirm "Install ncurses terminfo packages (fixes clear and terminal UI)?" true; then
+        sudo env DEBIAN_FRONTEND=noninteractive apt-get update -qq
+        sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y ncurses-term ncurses-base
+        ui_fix_term
+      fi
+      ;;
+  esac
+}
+
 prereqs_bootstrap() {
   if ui_noninteractive; then
     require_cmd curl tar bash || ui_die "missing curl, tar, or bash"
@@ -211,6 +225,8 @@ prereqs_bootstrap() {
 
   ui_step 0 7 "Prepare your system"
   ui_info "Checking tools needed for setup…"
+
+  prereqs_ensure_terminfo
 
   ui_spin "Checking curl…" true
   prereqs_ensure_cmd curl curl
