@@ -65,7 +65,7 @@ step_install_dir() {
   local target
   onboard_prompt target "Install folder" "${MUXCORE_INSTALL_DIR:-$current}"
   target="$(resolve_install_dir "$target")"
-  mkdir -p "$target"
+  ensure_writable_dir "$target" || die "cannot use install folder $target"
   if [[ "$(cd "$target" && pwd)" != "$ROOT" ]]; then
     info "copying installer into $target"
     if command -v rsync >/dev/null 2>&1; then
@@ -100,13 +100,18 @@ step_fetch_binaries() {
       ok "lab binaries: $MUXCORE_LAB_BIN"
     fi
   fi
-  if [[ -z "${MUXCORE_LAB_BIN:-}" ]] && onboard_yesno "Download release binaries now?" "y"; then
+  if [[ -n "${MUXCORE_LAB_BIN:-}" ]]; then
+    ensure_writable_dir "$ROOT/bin" || die "cannot write to $ROOT/bin (permission denied)"
+    info "running install.sh with lab binaries"
+    "$ROOT/install.sh"
+    return 0
+  fi
+  if onboard_yesno "Download release binaries now?" "y"; then
+    ensure_writable_dir "$ROOT/bin" || die "cannot write to $ROOT/bin (permission denied)"
     info "running install.sh (may take a few minutes on first run)"
     "$ROOT/install.sh"
-  elif [[ -z "${MUXCORE_LAB_BIN:-}" ]]; then
-    ok "skipped download — place binaries in $ROOT/bin/ then run ./install.sh"
   else
-    "$ROOT/install.sh"
+    ok "skipped download — place binaries in $ROOT/bin/ then run ./install.sh"
   fi
 }
 
@@ -220,6 +225,7 @@ step_finish() {
 
 main() {
   cd "$ROOT"
+  onboard_require_tty
   echo
   echo "╔══════════════════════════════════════════╗"
   echo "║  MuxCore setup — guided first launch     ║"

@@ -24,6 +24,10 @@ github_token() {
     "$HOME/.config/muxcore/github.token" \
     "$HOME/.config/gh/hosts.yml"; do
     [[ -n "$f" && -f "$f" ]] || continue
+    if [[ ! -r "$f" ]]; then
+      echo "warning: cannot read GitHub token file $f (permission denied)" >&2
+      continue
+    fi
     if [[ "$f" == *hosts.yml ]]; then
       local tok
       tok="$(awk '/oauth_token:/ {print $2; exit}' "$f" 2>/dev/null || true)"

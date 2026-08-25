@@ -1,6 +1,52 @@
 # Shared helpers for muxcore-installer scripts.
 # shellcheck shell=bash
 
+_ONBOARD_READ_FD=0
+_ONBOARD_TTY_OPENED=0
+
+# curl | bash leaves stdin at EOF; read answers from the controlling TTY instead.
+onboard_open_tty() {
+  if [[ "$_ONBOARD_TTY_OPENED" == 1 ]]; then
+    return 0
+  fi
+  if [[ -r /dev/tty ]]; then
+    exec 3</dev/tty
+    _ONBOARD_READ_FD=3
+    _ONBOARD_TTY_OPENED=1
+    return 0
+  fi
+  if [[ ! -t 0 ]]; then
+    echo "error: interactive setup requires a terminal (no /dev/tty)." >&2
+    echo "Save the script and run it directly:" >&2
+    echo "  curl -fsSL https://getmuxcore.zem.systems -o get-onboard.sh && bash get-onboard.sh" >&2
+    return 1
+  fi
+  _ONBOARD_READ_FD=0
+  _ONBOARD_TTY_OPENED=1
+  return 0
+}
+
+onboard_require_tty() {
+  onboard_open_tty || exit 1
+}
+
+ensure_writable_dir() {
+  local d="$1"
+  if [[ -e "$d" && ! -d "$d" ]]; then
+    echo "error: $d exists and is not a directory" >&2
+    return 1
+  fi
+  if ! mkdir -p "$d" 2>/dev/null; then
+    echo "error: cannot create $d (permission denied)" >&2
+    return 1
+  fi
+  if [[ ! -w "$d" ]]; then
+    echo "error: directory not writable: $d" >&2
+    return 1
+  fi
+  return 0
+}
+
 installer_root() {
   cd "$(dirname "${BASH_SOURCE[1]}")/.." && pwd
 }
@@ -105,31 +151,35 @@ onboard_step() {
 
 onboard_prompt() {
   local var="$1" q="$2" def="${3:-}" ans
+  onboard_require_tty
   if [[ -n "$def" ]]; then
-    read -r -p "$q [$def]: " ans || true
+    read -r -p "$q [$def]: " ans -u "$_ONBOARD_READ_FD" || true
     ans="${ans:-$def}"
   else
-    read -r -p "$q: " ans || true
+    read -r -p "$q: " ans -u "$_ONBOARD_READ_FD" || true
   fi
   printf -v "$var" '%s' "$ans"
 }
 
 onboard_prompt_secret() {
   local var="$1" q="$2" def="${3:-}" ans
+  onboard_require_tty
   if [[ -n "$def" ]]; then
-    read -r -s -p "$q [press Enter to keep current]: " ans || true
-    echo
+    read -r -s -p "$q [press Enter to keep current]: " ans -u "$_ONBOARD_READ_FD" || true
+    echo >&"$_ONBOARD_READ_FD"
     ans="${ans:-$def}"
   else
-    read -r -s -p "$q: " ans || true
-    echo
+    read -r -s -p "$q: " ans -u "$_ONBOARD_READ_FD" || true
+    echo >&"$_ONBOARD_READ_FD"
+    ans="${ans:-$def}"
   fi
   printf -v "$var" '%s' "$ans"
 }
 
 onboard_yesno() {
   local q="$1" def="${2:-y}" ans
-  read -r -p "$q [$def]: " ans || true
+  onboard_require_tty
+  read -r -p "$q [$def]: " ans -u "$_ONBOARD_READ_FD" || true
   ans="${ans:-$def}"
   [[ "$ans" =~ ^[Yy] ]]
 }
