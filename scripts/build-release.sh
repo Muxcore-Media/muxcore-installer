@@ -49,10 +49,11 @@ done
 
 (
   cd "$DIST"
+  # get-onboard.sh matches $2==<bare filename> — no "./" prefix.
   if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum ./*.tar.gz >SHA256SUMS
+    sha256sum -- *.tar.gz >SHA256SUMS
   else
-    shasum -a 256 ./*.tar.gz >SHA256SUMS
+    shasum -a 256 -- *.tar.gz >SHA256SUMS
   fi
 )
 

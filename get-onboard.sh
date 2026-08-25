@@ -166,26 +166,53 @@ extract_binary() {
   printf '%s\n' "$found"
 }
 
+# GitHub's plain releases/download/... URL 404s for a private repo even with
+# a valid token — private assets must go through the numeric asset-ID API
+# endpoint instead. Needs jq; degrades to the direct-URL error without it.
+asset_id_by_name() {
+  local asset_name="$1" token="$2"
+  command -v jq >/dev/null 2>&1 || return 1
+  [[ -n "$token" ]] || return 1
+  curl --proto '=https' --tlsv1.2 -fsSL \
+    -H "Authorization: Bearer ${token}" \
+    -H "Accept: application/vnd.github+json" \
+    "https://api.github.com/repos/${INSTALLER_REPO}/releases/tags/${INSTALLER_TAG}" \
+    | jq -r --arg n "$asset_name" '.assets[]? | select(.name == $n) | .id' | head -1
+}
+
+# Downloads a named release asset to dest, trying the plain URL first and
+# falling back to the authenticated asset-ID endpoint for private repos.
+fetch_release_asset() {
+  local asset_name="$1" dest="$2" token id
+  local url="https://github.com/${INSTALLER_REPO}/releases/download/${INSTALLER_TAG}/${asset_name}"
+  if curl_auth -o "$dest" "$url" 2>/dev/null; then
+    return 0
+  fi
+  token="$(bootstrap_token 2>/dev/null || true)"
+  [[ -n "$token" ]] || return 1
+  id="$(asset_id_by_name "$asset_name" "$token" 2>/dev/null || true)"
+  [[ -n "$id" && "$id" != "null" ]] || return 1
+  curl_auth -o "$dest" "https://api.github.com/repos/${INSTALLER_REPO}/releases/assets/${id}"
+}
+
 fetch_binary() {
   command -v curl >/dev/null 2>&1 || die "curl is required to download the installer"
   command -v tar >/dev/null 2>&1 || die "tar is required to unpack the installer"
 
-  local os arch ver cache dest tarball sums url
+  local os arch ver cache dest tarball sums asset
   read -r os arch < <(detect_os_arch)
   ver="${INSTALLER_TAG#v}"
   cache="${XDG_CACHE_HOME:-$HOME/.cache}/muxcore-installer/${INSTALLER_TAG}"
   dest="$cache/${os}_${arch}"
   mkdir -p "$cache" "$dest"
-  tarball="$cache/${BIN_NAME}_${ver}_${os}_${arch}.tar.gz"
+  asset="${BIN_NAME}_${ver}_${os}_${arch}.tar.gz"
+  tarball="$cache/${asset}"
   sums="$cache/SHA256SUMS"
 
-  url="https://github.com/${INSTALLER_REPO}/releases/download/${INSTALLER_TAG}/${BIN_NAME}_${ver}_${os}_${arch}.tar.gz"
   echo "==> fetching MuxCore installer ${INSTALLER_TAG} (${os}/${arch})" >&2
-  curl_auth -o "$tarball" "$url" \
-    || die "could not download $BIN_NAME ${INSTALLER_TAG} for ${os}/${arch} (set GITHUB_TOKEN if the repo is still private)"
-  curl_auth -o "$sums" \
-    "https://github.com/${INSTALLER_REPO}/releases/download/${INSTALLER_TAG}/SHA256SUMS" \
-    2>/dev/null || true
+  fetch_release_asset "$asset" "$tarball" \
+    || die "could not download $BIN_NAME ${INSTALLER_TAG} for ${os}/${arch} (set GITHUB_TOKEN if the repo is still private — needs jq too)"
+  fetch_release_asset "SHA256SUMS" "$sums" 2>/dev/null || true
   if [[ -s "$sums" ]]; then
     verify_sha256 "$tarball" "$sums"
   fi
