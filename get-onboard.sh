@@ -6,7 +6,7 @@
 set -euo pipefail
 
 # Baked pin — override with MUXCORE_INSTALLER_TAG. Not "latest".
-INSTALLER_TAG="${MUXCORE_INSTALLER_TAG:-v0.3.2}"
+INSTALLER_TAG="${MUXCORE_INSTALLER_TAG:-v0.3.3}"
 INSTALLER_REPO="${MUXCORE_INSTALLER_REPO:-Muxcore-Media/muxcore-installer}"
 GITHUB_ORG="${MUXCORE_GITHUB_ORG:-Muxcore-Media}"
 BIN_NAME="muxcore-setup"

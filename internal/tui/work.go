@@ -213,6 +213,32 @@ func dryRunEnv() bool {
 	return envTruthy("MUXCORE_DRY_RUN")
 }
 
+func (m *Model) updateWork(msg tea.Msg) (tea.Model, tea.Cmd) {
+	km, ok := msg.(tea.KeyMsg)
+	if !ok {
+		return m, nil
+	}
+	// Install finished (success or failure) — the viewport hint says "q to quit".
+	if km.String() == "q" && m.work != nil && m.work.finished {
+		m.quitting = true
+		return m, quitCmd()
+	}
+	return m, nil
+}
+
+func (m *Model) updateDone(msg tea.Msg) (tea.Model, tea.Cmd) {
+	km, ok := msg.(tea.KeyMsg)
+	if !ok {
+		return m, nil
+	}
+	switch km.String() {
+	case "q", "enter":
+		m.quitting = true
+		return m, quitCmd()
+	}
+	return m, nil
+}
+
 func (m *Model) viewSummary() string {
 	a := m.answers
 	line := func(label, val string) string {
