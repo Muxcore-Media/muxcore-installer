@@ -218,7 +218,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case phaseSummary:
 		return m.updateSummary(msg)
 	case phaseWorking:
-		return m, nil
+		return m.updateWork(msg)
+	case phaseDone:
+		return m.updateDone(msg)
 	}
 	return m, nil
 }
