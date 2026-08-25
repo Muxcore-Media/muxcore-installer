@@ -100,7 +100,9 @@ step_fetch_binaries() {
       return 0
       ;;
     "Use developer lab binaries from _mvp/bin")
-      export MUXCORE_LAB_BIN="$(cd "$ROOT/../_mvp/bin" && pwd)"
+      local lab_bin
+      lab_bin="$(cd "$ROOT/../_mvp/bin" && pwd)"
+      export MUXCORE_LAB_BIN="$lab_bin"
       ok "lab binaries: $MUXCORE_LAB_BIN"
       ;;
     "Skip for now")

@@ -5,7 +5,10 @@
 #   bash get-onboard.sh
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || pwd)"
+SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]:-$0}")"
+if ! SCRIPT_DIR="$(cd "$SCRIPT_DIR" && pwd)"; then
+  SCRIPT_DIR="$(pwd)"
+fi
 MUXCORE_INSTALLER_REPO="${MUXCORE_INSTALLER_REPO:-Muxcore-Media/muxcore-installer}"
 MUXCORE_INSTALLER_REF="${MUXCORE_INSTALLER_REF:-main}"
 DEFAULT_INSTALL_DIR="${MUXCORE_INSTALL_DIR:-$HOME/muxcore}"
