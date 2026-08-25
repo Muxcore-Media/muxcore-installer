@@ -220,6 +220,7 @@ step_finish() {
 main() {
   cd "$ROOT"
   onboard_require_tty
+  ui_fix_term
 
   prereqs_ensure_curl_first
   prereqs_ensure_gum
