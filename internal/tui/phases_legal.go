@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"time"
@@ -20,6 +21,9 @@ func (m *Model) initLegal() {
 		{Label: "I do not agree"},
 	}, false)
 	m.legalMenu.Cursor = 1 // default No, matches the old gum confirm default
+	// Nothing to scroll through (short terminal or short text) — don't force
+	// a no-op scroll gesture just to unlock the menu.
+	m.legalRead = m.legalVP.AtBottom()
 	m.phase = phaseLegal
 }
 
@@ -32,18 +36,30 @@ func (m *Model) updateLegal(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case "q":
 		return m, quitCmd()
 	case "y":
-		m.acceptLegal()
+		if m.legalRead {
+			m.acceptLegal()
+		}
 		return m, nil
 	case "n":
 		m.quitting = true
 		return m, quitCmd()
 	case "up", "down", "k", "j":
-		var cmd tea.Cmd
-		m.legalVP, cmd = m.legalVP.Update(km)
-		_ = cmd
+		if !m.legalRead {
+			// Force reading to the end before the choice becomes reachable —
+			// arrows only scroll the statement until then.
+			var cmd tea.Cmd
+			m.legalVP, cmd = m.legalVP.Update(km)
+			if m.legalVP.AtBottom() {
+				m.legalRead = true
+			}
+			return m, cmd
+		}
 		m.legalMenu.HandleKey(km)
 		return m, nil
 	case "enter":
+		if !m.legalRead {
+			return m, nil
+		}
 		if m.legalMenu.Cursor == 0 {
 			m.acceptLegal()
 		} else {
@@ -72,5 +88,9 @@ func recordLegalAcceptance(root string) {
 
 func (m *Model) viewLegal() string {
 	box := styleBox.Width(78).Render(m.legalVP.View())
+	if !m.legalRead {
+		hint := styleHint.Render(fmt.Sprintf("↓ keep scrolling to read the rest (%.0f%%) — the choice below unlocks at the end", m.legalVP.ScrollPercent()*100))
+		return box + "\n\n" + hint
+	}
 	return box + "\n\n" + m.legalMenu.View()
 }
