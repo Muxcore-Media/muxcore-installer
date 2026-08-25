@@ -153,10 +153,10 @@ onboard_prompt() {
   local var="$1" q="$2" def="${3:-}" ans
   onboard_require_tty
   if [[ -n "$def" ]]; then
-    read -r -p "$q [$def]: " ans -u "$_ONBOARD_READ_FD" || true
+    read -r -u "$_ONBOARD_READ_FD" -p "$q [$def]: " ans || true
     ans="${ans:-$def}"
   else
-    read -r -p "$q: " ans -u "$_ONBOARD_READ_FD" || true
+    read -r -u "$_ONBOARD_READ_FD" -p "$q: " ans || true
   fi
   printf -v "$var" '%s' "$ans"
 }
@@ -165,11 +165,11 @@ onboard_prompt_secret() {
   local var="$1" q="$2" def="${3:-}" ans
   onboard_require_tty
   if [[ -n "$def" ]]; then
-    read -r -s -p "$q [press Enter to keep current]: " ans -u "$_ONBOARD_READ_FD" || true
+    read -r -s -u "$_ONBOARD_READ_FD" -p "$q [press Enter to keep current]: " ans || true
     echo >&"$_ONBOARD_READ_FD"
     ans="${ans:-$def}"
   else
-    read -r -s -p "$q: " ans -u "$_ONBOARD_READ_FD" || true
+    read -r -s -u "$_ONBOARD_READ_FD" -p "$q: " ans || true
     echo >&"$_ONBOARD_READ_FD"
     ans="${ans:-$def}"
   fi
@@ -179,7 +179,7 @@ onboard_prompt_secret() {
 onboard_yesno() {
   local q="$1" def="${2:-y}" ans
   onboard_require_tty
-  read -r -p "$q [$def]: " ans -u "$_ONBOARD_READ_FD" || true
+  read -r -u "$_ONBOARD_READ_FD" -p "$q [$def]: " ans || true
   ans="${ans:-$def}"
   [[ "$ans" =~ ^[Yy] ]]
 }
