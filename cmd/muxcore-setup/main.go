@@ -1,0 +1,100 @@
+// Command muxcore-setup is MuxCore's installer: an interactive Bubbletea
+// wizard for first-run setup, or a non-interactive pipeline driven by env
+// vars (MUXCORE_NONINTERACTIVE=1) for CI/scripted installs. It replaces the
+// old onboard.sh + install.sh bash wizard.
+package main
+
+import (
+	"fmt"
+	"os"
+	"runtime"
+
+	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/Muxcore-Media/muxcore-installer/internal/pathutil"
+	"github.com/Muxcore-Media/muxcore-installer/internal/prereqs"
+	"github.com/Muxcore-Media/muxcore-installer/internal/tui"
+)
+
+// version is set via -ldflags -X main.version=... by scripts/build-release.sh.
+var version = "dev"
+
+func main() {
+	os.Exit(run())
+}
+
+func run() int {
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "-h", "--help":
+			printUsage()
+			return 0
+		case "--version":
+			fmt.Printf("muxcore-setup %s (see PIN-MATRIX.md for the module pin matrix baked into this build)\n", version)
+			return 0
+		}
+	}
+
+	if prereqs.IsRoot() {
+		fmt.Fprintln(os.Stderr, "error: do not run muxcore-setup as root. Run it as your normal user; it will ask for sudo only if you choose a system service or need optional packages.")
+		return 1
+	}
+	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
+		fmt.Fprintln(os.Stderr, "error: unsupported OS. MuxCore's installer supports Linux and macOS (use WSL2 on Windows).")
+		return 1
+	}
+
+	if os.Getenv("MUXCORE_NONINTERACTIVE") == "1" {
+		return runNonInteractive()
+	}
+
+	if !isTTY() {
+		fmt.Fprintln(os.Stderr, `error: this installer needs a terminal.
+
+Safer two-step:
+  curl --proto '=https' --tlsv1.2 -fsSL https://getmuxcore.zem.systems -o get-muxcore.sh
+  bash get-muxcore.sh`)
+		return 1
+	}
+
+	root := os.Getenv("MUXCORE_INSTALL_DIR")
+	if root == "" {
+		root = pathutil.InstallRecommended()
+	}
+	root = pathutil.Resolve(root)
+
+	m := tui.New(root)
+	p := tea.NewProgram(m, tea.WithAltScreen())
+	m.SetProgram(p)
+	if _, err := p.Run(); err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		return 1
+	}
+	return 0
+}
+
+func isTTY() bool {
+	fi, err := os.Stdin.Stat()
+	if err != nil {
+		return false
+	}
+	return (fi.Mode() & os.ModeCharDevice) != 0
+}
+
+func printUsage() {
+	fmt.Println(`muxcore-setup — MuxCore's interactive installer
+
+Usage:
+  muxcore-setup              run the interactive wizard
+  MUXCORE_NONINTERACTIVE=1 MUXCORE_I_AGREE=1 muxcore-setup
+                             scripted install from env vars (see README.md)
+
+Env vars (non-interactive mode):
+  MUXCORE_I_AGREE=1          required — accepts the acceptable-use agreement
+  MUXCORE_DRY_RUN=1          stop before downloading or starting anything
+  MUXCORE_INSTALL_DIR        install root (default: current directory)
+  MUXCORE_LIBRARIES          CSV: Movies,TV,Music,Books,Comics,Audiobooks
+  MUXCORE_PLAYBACK           CSV: MuxCore player,Jellyfin,Plex,Emby,DLNA
+  MUXCORE_PROFILE            sqlite | postgres
+  MVP_ADMIN_USER / MVP_ADMIN_PASSWORD`)
+}

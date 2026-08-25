@@ -1,0 +1,73 @@
+# publish-policy-default — event publication policy
+#
+# Rules are evaluated in order. The first matching rule decides.
+# Event types support glob matching: "download.*", "media.*", "*"
+#
+# Laptop / installer demo: the catch-all at the bottom is ENABLED so the
+# fixture mesh works without hand-editing YAML. For production, comment it
+# out and keep least-privilege rules only.
+#
+# Installer: muxcore-installer ships copies under policies/publish-policy.yaml
+# and sets PUBLISH_POLICY_FILE to that path (do not rely on process cwd).
+# Optional deny visibility: set PUBLISH_POLICY_AUDIT_PATH to a JSONL file.
+
+# Downloader can publish download-related events
+- caller: "downloader-qbittorrent"
+  event_types: ["download.*"]
+- caller: "downloader-native-torrent"
+  event_types: ["download.*"]
+
+# Transcoder can publish transcode-related events
+- caller: "transcoder-ffmpeg"
+  event_types: ["transcode.*"]
+
+# Media managers can publish their lifecycle events
+- caller: "media-movies"
+  event_types: ["media.*"]
+- caller: "media-tvshows"
+  event_types: ["media.*"]
+
+# Automation dispatches / wanted lifecycle
+- caller: "media-automation"
+  event_types: ["download.*", "media.*"]
+
+# Scanner can publish file import events
+- caller: "media-scanner"
+  event_types: ["media.*"]
+
+# Indexer can publish indexer lifecycle events
+- caller: "indexer-prowlarr"
+  event_types: ["indexer.*", "module.*"]
+- caller: "indexer-piratebay"
+  event_types: ["indexer.*", "module.*"]
+- caller: "indexer-torznab"
+  event_types: ["indexer.*", "module.*"]
+
+# Metadata provider
+- caller: "metadata-tmdb"
+  event_types: ["media.*", "metadata.*"]
+
+# Request media can publish request lifecycle events
+- caller: "request-media"
+  event_types: ["media.*"]
+
+# Notification module can send alerts
+- caller: "notifier-discord"
+  event_types: ["notification.*", "alert.*"]
+- caller: "notification-default"
+  event_types: ["notification.*", "alert.*"]
+- caller: "notification-apprise"
+  event_types: ["notification.*", "alert.*"]
+
+# Auth module can publish auth lifecycle events
+- caller: "auth-local"
+  event_types: ["auth.*"]
+
+# Any module can publish module lifecycle events
+- caller: "*"
+  event_types: ["module.*", "cluster.*"]
+
+# Laptop / installer demo catch-all — leave enabled for fixture mesh.
+# Comment out for production least-privilege deployments.
+- caller: "*"
+  event_types: ["*"]

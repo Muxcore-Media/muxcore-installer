@@ -6,6 +6,7 @@
 /run/*
 !/run/.gitkeep
 /cache/
+/dist/
 *.tar.gz
 *.log
 *.pid

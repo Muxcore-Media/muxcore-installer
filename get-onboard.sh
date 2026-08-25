@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 # Landing script for: curl --proto '=https' --tlsv1.2 -fsSL https://getmuxcore.zem.systems | bash
-# Downloads a pinned installer tarball (checksummed when published), then execs onboard.sh.
-# No sudo. No package installs. No module downloads.
+# Downloads a pinned, checksummed muxcore-setup binary (a self-contained
+# Bubbletea TUI — no bash wizard, no separate lib/ scripts to fetch) and execs
+# it. No sudo. No package installs. No module downloads happen here.
 set -euo pipefail
 
 # Baked pin — override with MUXCORE_INSTALLER_TAG. Not "latest".
-INSTALLER_TAG="${MUXCORE_INSTALLER_TAG:-v0.2.0}"
+INSTALLER_TAG="${MUXCORE_INSTALLER_TAG:-v0.3.0}"
 INSTALLER_REPO="${MUXCORE_INSTALLER_REPO:-Muxcore-Media/muxcore-installer}"
 GITHUB_ORG="${MUXCORE_GITHUB_ORG:-Muxcore-Media}"
+BIN_NAME="muxcore-setup"
 
 die() { echo "error: $*" >&2; exit 1; }
 
@@ -36,7 +38,7 @@ detect_os_arch() {
   esac
   case "$os" in
     linux|darwin) ;;
-    *) die "unsupported OS: $os (need Linux or macOS)" ;;
+    *) die "unsupported OS: $os (need Linux or macOS — use WSL2 on Windows)" ;;
   esac
   printf '%s %s\n' "$os" "$arch"
 }
@@ -103,23 +105,21 @@ script_dir() {
   fi
 }
 
-find_local_installer() {
+find_local_binary() {
   # Piped curl|bash has no real script dir — never treat CWD as the installer.
   if [[ ! -t 0 && -z "${BASH_SOURCE[0]:-}" ]]; then
     return 1
   fi
-  local here src
+  local here candidate
   here="$(script_dir)"
-  if [[ -f "$here/onboard.sh" && -f "$here/lib/ui.sh" ]]; then
-    printf '%s\n' "$here"
-    return 0
-  fi
-  for src in \
-    "$here/muxcore-installer" \
-    "$here/../muxcore-installer" \
-    "${PWD:-}/muxcore-installer"; do
-    if [[ -f "$src/onboard.sh" && -f "$src/lib/ui.sh" ]]; then
-      (cd "$src" && pwd)
+  for candidate in \
+    "$here/$BIN_NAME" \
+    "$here/bin/$BIN_NAME" \
+    "$here/muxcore-installer/$BIN_NAME" \
+    "$here/muxcore-installer/bin/$BIN_NAME" \
+    "${PWD:-}/muxcore-installer/$BIN_NAME"; do
+    if [[ -x "$candidate" ]]; then
+      printf '%s\n' "$candidate"
       return 0
     fi
   done
@@ -151,21 +151,22 @@ verify_sha256() {
   echo "==> checksum ok ($name)" >&2
 }
 
-extract_and_find() {
+extract_binary() {
   local archive="$1" dest="$2"
   mkdir -p "$dest"
   tar -xzf "$archive" -C "$dest"
-  if [[ -f "$dest/onboard.sh" ]]; then
-    printf '%s\n' "$dest"
+  if [[ -x "$dest/$BIN_NAME" ]]; then
+    printf '%s\n' "$dest/$BIN_NAME"
     return 0
   fi
   local found
-  found="$(find "$dest" -maxdepth 3 -type f -name onboard.sh 2>/dev/null | head -1 || true)"
+  found="$(find "$dest" -maxdepth 3 -type f -name "$BIN_NAME" 2>/dev/null | head -1 || true)"
   [[ -n "$found" ]] || return 1
-  cd "$(dirname "$found")" && pwd
+  chmod u+x "$found"
+  printf '%s\n' "$found"
 }
 
-fetch_installer() {
+fetch_binary() {
   command -v curl >/dev/null 2>&1 || die "curl is required to download the installer"
   command -v tar >/dev/null 2>&1 || die "tar is required to unpack the installer"
 
@@ -173,36 +174,22 @@ fetch_installer() {
   read -r os arch < <(detect_os_arch)
   ver="${INSTALLER_TAG#v}"
   cache="${XDG_CACHE_HOME:-$HOME/.cache}/muxcore-installer/${INSTALLER_TAG}"
-  dest="$cache/src"
+  dest="$cache/${os}_${arch}"
   mkdir -p "$cache" "$dest"
-  tarball="$cache/muxcore-installer_${ver}_${os}_${arch}.tar.gz"
+  tarball="$cache/${BIN_NAME}_${ver}_${os}_${arch}.tar.gz"
   sums="$cache/SHA256SUMS"
 
-  url="https://github.com/${INSTALLER_REPO}/releases/download/${INSTALLER_TAG}/muxcore-installer_${ver}_${os}_${arch}.tar.gz"
-  echo "==> fetching MuxCore installer ${INSTALLER_TAG}" >&2
-  if curl_auth -o "$tarball" "$url" 2>/dev/null; then
-    curl_auth -o "$sums" \
-      "https://github.com/${INSTALLER_REPO}/releases/download/${INSTALLER_TAG}/SHA256SUMS" \
-      2>/dev/null || true
-    if [[ -s "$sums" ]]; then
-      verify_sha256 "$tarball" "$sums"
-    fi
-    extract_and_find "$tarball" "$dest" && return 0
+  url="https://github.com/${INSTALLER_REPO}/releases/download/${INSTALLER_TAG}/${BIN_NAME}_${ver}_${os}_${arch}.tar.gz"
+  echo "==> fetching MuxCore installer ${INSTALLER_TAG} (${os}/${arch})" >&2
+  curl_auth -o "$tarball" "$url" \
+    || die "could not download $BIN_NAME ${INSTALLER_TAG} for ${os}/${arch} (set GITHUB_TOKEN if the repo is still private)"
+  curl_auth -o "$sums" \
+    "https://github.com/${INSTALLER_REPO}/releases/download/${INSTALLER_TAG}/SHA256SUMS" \
+    2>/dev/null || true
+  if [[ -s "$sums" ]]; then
+    verify_sha256 "$tarball" "$sums"
   fi
-
-  echo "==> release tarball unavailable; trying GitHub archive ${INSTALLER_TAG}" >&2
-  url="https://github.com/${INSTALLER_REPO}/archive/refs/tags/${INSTALLER_TAG}.tar.gz"
-  if curl_auth -o "$tarball" "$url" 2>/dev/null; then
-    extract_and_find "$tarball" "$dest" && return 0
-  fi
-
-  echo "==> tag archive unavailable; trying main" >&2
-  url="https://codeload.github.com/${GITHUB_ORG}/muxcore-installer/tar.gz/refs/heads/main"
-  if curl_auth -o "$tarball" "$url" 2>/dev/null; then
-    extract_and_find "$tarball" "$dest" && return 0
-  fi
-
-  die "could not download the installer from GitHub (set GITHUB_TOKEN if the repo is still private)"
+  extract_binary "$tarball" "$dest" || die "release tarball did not contain $BIN_NAME"
 }
 
 main() {
@@ -211,21 +198,14 @@ main() {
   detect_os_arch >/dev/null
   rebind_tty
 
-  local installer_root
-  if installer_root="$(find_local_installer)"; then
-    echo "==> using local installer at $installer_root"
+  local bin
+  if bin="$(find_local_binary)"; then
+    echo "==> using local build at $bin" >&2
   else
-    installer_root="$(fetch_installer)"
+    bin="$(fetch_binary)"
   fi
 
-  [[ -f "$installer_root/onboard.sh" ]] || die "onboard.sh missing in $installer_root"
-  chmod u+x "$installer_root/onboard.sh" \
-    "$installer_root/install.sh" \
-    "$installer_root/up.sh" \
-    "$installer_root/bootstrap-auth.sh" \
-    "$installer_root/smoke-fixture.sh" 2>/dev/null || true
-
-  exec bash "$installer_root/onboard.sh" "$@"
+  exec "$bin" "$@"
 }
 
 main "$@"
