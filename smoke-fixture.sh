@@ -124,7 +124,7 @@ cat <<EOF
 TMDB_FIXTURE=${TMDB_FIXTURE:-1}
 Movie library: ${MVP_LIBRARY_ROOT:-$ROOT/data/library}
 TV library:    ${MVP_TV_LIBRARY_ROOT:-$ROOT/data/library/tv}
-Incoming:      ${MVP_DOWNLOADS_DIR:-$ROOT/data/downloads}
+Import folder: ${MVP_IMPORT_DIR:-${MVP_DOWNLOADS_DIR:-$ROOT/data/import}}
 
 URLs: $ROOT/run/VIEW-ME.txt
 Admin: ${ADMIN_URL}

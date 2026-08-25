@@ -1,123 +1,229 @@
 #!/usr/bin/env bash
-# Bootstrap entry: fetch installer repo if needed, then run onboard.sh.
-# Usage:
-#   curl -fsSL https://getmuxcore.zem.systems | bash
-#   bash get-onboard.sh
+# Landing script for: curl --proto '=https' --tlsv1.2 -fsSL https://getmuxcore.zem.systems | bash
+# Downloads a pinned installer tarball (checksummed when published), then execs onboard.sh.
+# No sudo. No package installs. No module downloads.
 set -euo pipefail
 
-SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]:-$0}")"
-if ! SCRIPT_DIR="$(cd "$SCRIPT_DIR" && pwd)"; then
-  SCRIPT_DIR="$(pwd)"
-fi
-MUXCORE_INSTALLER_REPO="${MUXCORE_INSTALLER_REPO:-Muxcore-Media/muxcore-installer}"
-MUXCORE_INSTALLER_REF="${MUXCORE_INSTALLER_REF:-main}"
-DEFAULT_INSTALL_DIR="${MUXCORE_INSTALL_DIR:-$HOME/muxcore}"
+# Baked pin — override with MUXCORE_INSTALLER_TAG. Not "latest".
+INSTALLER_TAG="${MUXCORE_INSTALLER_TAG:-v0.2.0}"
+INSTALLER_REPO="${MUXCORE_INSTALLER_REPO:-Muxcore-Media/muxcore-installer}"
+GITHUB_ORG="${MUXCORE_GITHUB_ORG:-Muxcore-Media}"
 
 die() { echo "error: $*" >&2; exit 1; }
 
-piped_bootstrap() { [[ ! -t 0 ]]; }
+refuse_windows() {
+  case "$(uname -s 2>/dev/null || echo unknown)" in
+    MINGW*|MSYS*|CYGWIN*|Windows_NT|windows)
+      cat >&2 <<'EOF'
+error: native Windows is not supported.
+Install MuxCore inside WSL2 (Ubuntu), then re-run:
 
-bootstrap_github_token() {
+  curl --proto '=https' --tlsv1.2 -fsSL https://getmuxcore.zem.systems | bash
+EOF
+      exit 1
+      ;;
+  esac
+}
+
+detect_os_arch() {
+  local os arch
+  os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+  arch="$(uname -m)"
+  case "$arch" in
+    x86_64|amd64) arch=amd64 ;;
+    aarch64|arm64) arch=arm64 ;;
+    *) die "unsupported architecture: $arch (need amd64 or arm64)" ;;
+  esac
+  case "$os" in
+    linux|darwin) ;;
+    *) die "unsupported OS: $os (need Linux or macOS)" ;;
+  esac
+  printf '%s %s\n' "$os" "$arch"
+}
+
+rebind_tty() {
+  if [[ -t 0 ]]; then
+    return 0
+  fi
+  if [[ -r /dev/tty ]] && exec </dev/tty 2>/dev/null; then
+    return 0
+  fi
+  if [[ "${MUXCORE_NONINTERACTIVE:-}" == "1" ]]; then
+    return 0
+  fi
+  cat >&2 <<'EOF'
+error: this installer needs a terminal (stdin is not a TTY).
+
+Safer two-step:
+
+  curl --proto '=https' --tlsv1.2 -fsSL https://getmuxcore.zem.systems -o get-muxcore.sh
+  bash get-muxcore.sh
+EOF
+  exit 1
+}
+
+bootstrap_token() {
   if [[ -n "${GITHUB_TOKEN:-}" ]]; then printf '%s' "$GITHUB_TOKEN"; return 0; fi
   if [[ -n "${GH_TOKEN:-}" ]]; then printf '%s' "$GH_TOKEN"; return 0; fi
+  if [[ -n "${MUXCORE_GITHUB_TOKEN:-}" ]]; then printf '%s' "$MUXCORE_GITHUB_TOKEN"; return 0; fi
   local f
-  for f in "$HOME/.config/muxcore/github.token" "$HOME/.config/gh/hosts.yml"; do
-    [[ -f "$f" && -r "$f" ]] || continue
-    if [[ "$f" == *hosts.yml ]]; then
-      awk '/oauth_token:/ {print $2; exit}' "$f" 2>/dev/null && return 0
-      continue
-    fi
+  for f in \
+    "${MUXCORE_GITHUB_TOKEN_FILE:-}" \
+    "$HOME/.config/muxcore/github.token"; do
+    [[ -n "$f" && -f "$f" && -r "$f" ]] || continue
     tr -d '[:space:]' <"$f"
     return 0
   done
-  command -v gh >/dev/null 2>&1 && gh auth token 2>/dev/null && return 0
+  if command -v gh >/dev/null 2>&1; then
+    gh auth token 2>/dev/null && return 0
+  fi
   return 1
 }
 
-bootstrap_resolve_dir() {
-  local raw="$1" resolved
-  if resolved="$(cd / && realpath -m "$raw" 2>/dev/null)"; then
-    printf '%s\n' "$resolved"
-  elif resolved="$(python3 -c 'import os,sys; print(os.path.abspath(os.path.expanduser(sys.argv[1])))' "$raw" 2>/dev/null)"; then
-    printf '%s\n' "$resolved"
+curl_auth() {
+  local token
+  token="$(bootstrap_token 2>/dev/null || true)"
+  if [[ -n "$token" ]]; then
+    curl --proto '=https' --tlsv1.2 -fsSL \
+      -H "Authorization: Bearer ${token}" \
+      -H "Accept: application/octet-stream" \
+      "$@"
   else
-    case "$raw" in
-      ~/*) printf '%s\n' "${HOME}/${raw#~/}" ;;
-      ~) printf '%s\n' "$HOME" ;;
-      *) printf '%s\n' "$raw" ;;
-    esac
+    curl --proto '=https' --tlsv1.2 -fsSL "$@"
+  fi
+}
+
+script_dir() {
+  local here
+  here="$(dirname "${BASH_SOURCE[0]:-$0}")"
+  if here="$(cd "$here" 2>/dev/null && pwd)"; then
+    printf '%s\n' "$here"
+  else
+    pwd
   fi
 }
 
 find_local_installer() {
-  piped_bootstrap && return 1
-  local here="$SCRIPT_DIR" src
+  # Piped curl|bash has no real script dir — never treat CWD as the installer.
+  if [[ ! -t 0 && -z "${BASH_SOURCE[0]:-}" ]]; then
+    return 1
+  fi
+  local here src
+  here="$(script_dir)"
   if [[ -f "$here/onboard.sh" && -f "$here/lib/ui.sh" ]]; then
     printf '%s\n' "$here"
     return 0
   fi
-  for src in "$here/muxcore-installer" "$here/../muxcore-installer" "$PWD/muxcore-installer" "$PWD"; do
+  for src in \
+    "$here/muxcore-installer" \
+    "$here/../muxcore-installer" \
+    "${PWD:-}/muxcore-installer"; do
     if [[ -f "$src/onboard.sh" && -f "$src/lib/ui.sh" ]]; then
-      cd "$src" && pwd
+      (cd "$src" && pwd)
       return 0
     fi
   done
   return 1
 }
 
-fetch_installer() {
-  local dest="$1"
-  mkdir -p "$dest" 2>/dev/null || die "cannot create $dest (permission denied)"
-  [[ -w "$dest" ]] || die "directory not writable: $dest"
-
-  if [[ -e "$dest" && ! -d "$dest/.git" && -n "$(ls -A "$dest" 2>/dev/null || true)" ]]; then
-    die "$dest exists and is not empty — remove it or set MUXCORE_INSTALL_DIR elsewhere"
-  fi
-
-  local token clone_url
-  token="$(bootstrap_github_token 2>/dev/null || true)"
-  if [[ -n "$token" ]]; then
-    clone_url="https://x-access-token:${token}@github.com/${MUXCORE_INSTALLER_REPO}.git"
-  else
-    clone_url="https://github.com/${MUXCORE_INSTALLER_REPO}.git"
-  fi
-
-  if ! command -v git >/dev/null 2>&1; then
-    die "git is required — run onboard.sh from a full checkout or install git first"
-  fi
-
-  if [[ -d "$dest/.git" ]]; then
-    echo "==> updating installer in $dest"
-    git -C "$dest" fetch --depth 1 origin "$MUXCORE_INSTALLER_REF" >/dev/null 2>&1 \
-      || die "git fetch failed (set GITHUB_TOKEN for private repos)"
-    git -C "$dest" checkout -q "$MUXCORE_INSTALLER_REF" 2>/dev/null \
-      || git -C "$dest" checkout -q -B "$MUXCORE_INSTALLER_REF" "origin/$MUXCORE_INSTALLER_REF"
-    git -C "$dest" reset --hard "origin/$MUXCORE_INSTALLER_REF" >/dev/null 2>&1 \
-      || die "git reset failed in $dest"
+sha256_file() {
+  local f="$1"
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$f" | awk '{print $1}'
     return 0
   fi
+  if command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$f" | awk '{print $1}'
+    return 0
+  fi
+  return 1
+}
 
-  echo "==> cloning ${MUXCORE_INSTALLER_REPO} (${MUXCORE_INSTALLER_REF}) → $dest"
-  GIT_TERMINAL_PROMPT=0 git clone --depth 1 --branch "$MUXCORE_INSTALLER_REF" "$clone_url" "$dest" \
-    || die "git clone failed (set GITHUB_TOKEN for private repos)"
+verify_sha256() {
+  local tarball="$1" sums="$2" want name got
+  name="$(basename "$tarball")"
+  want="$(awk -v n="$name" '$2==n || $2=="*"n {print $1; exit}' "$sums" 2>/dev/null || true)"
+  [[ -n "$want" ]] || { echo "note: no SHA-256 entry for $name — skipping verify" >&2; return 0; }
+  got="$(sha256_file "$tarball")" || die "no sha256sum/shasum on PATH to verify download"
+  if [[ "$got" != "$want" ]]; then
+    die "checksum mismatch for $name (got $got want $want)"
+  fi
+  echo "==> checksum ok ($name)"
+}
+
+extract_and_find() {
+  local archive="$1" dest="$2"
+  mkdir -p "$dest"
+  tar -xzf "$archive" -C "$dest"
+  if [[ -f "$dest/onboard.sh" ]]; then
+    printf '%s\n' "$dest"
+    return 0
+  fi
+  local found
+  found="$(find "$dest" -maxdepth 3 -type f -name onboard.sh 2>/dev/null | head -1 || true)"
+  [[ -n "$found" ]] || return 1
+  cd "$(dirname "$found")" && pwd
+}
+
+fetch_installer() {
+  command -v curl >/dev/null 2>&1 || die "curl is required to download the installer"
+  command -v tar >/dev/null 2>&1 || die "tar is required to unpack the installer"
+
+  local os arch ver cache dest tarball sums url
+  read -r os arch < <(detect_os_arch)
+  ver="${INSTALLER_TAG#v}"
+  cache="${XDG_CACHE_HOME:-$HOME/.cache}/muxcore-installer/${INSTALLER_TAG}"
+  dest="$cache/src"
+  mkdir -p "$cache" "$dest"
+  tarball="$cache/muxcore-installer_${ver}_${os}_${arch}.tar.gz"
+  sums="$cache/SHA256SUMS"
+
+  url="https://github.com/${INSTALLER_REPO}/releases/download/${INSTALLER_TAG}/muxcore-installer_${ver}_${os}_${arch}.tar.gz"
+  echo "==> fetching MuxCore installer ${INSTALLER_TAG}"
+  if curl_auth -o "$tarball" "$url" 2>/dev/null; then
+    curl_auth -o "$sums" \
+      "https://github.com/${INSTALLER_REPO}/releases/download/${INSTALLER_TAG}/SHA256SUMS" \
+      2>/dev/null || true
+    if [[ -s "$sums" ]]; then
+      verify_sha256 "$tarball" "$sums"
+    fi
+    extract_and_find "$tarball" "$dest" && return 0
+  fi
+
+  echo "==> release tarball unavailable; trying GitHub archive ${INSTALLER_TAG}"
+  url="https://github.com/${INSTALLER_REPO}/archive/refs/tags/${INSTALLER_TAG}.tar.gz"
+  if curl_auth -o "$tarball" "$url" 2>/dev/null; then
+    extract_and_find "$tarball" "$dest" && return 0
+  fi
+
+  echo "==> tag archive unavailable; trying main"
+  url="https://codeload.github.com/${GITHUB_ORG}/muxcore-installer/tar.gz/refs/heads/main"
+  if curl_auth -o "$tarball" "$url" 2>/dev/null; then
+    extract_and_find "$tarball" "$dest" && return 0
+  fi
+
+  die "could not download the installer from GitHub (set GITHUB_TOKEN if the repo is still private)"
 }
 
 main() {
   command -v bash >/dev/null 2>&1 || die "bash is required"
+  refuse_windows
+  detect_os_arch >/dev/null
+  rebind_tty
 
-  local installer_root target
+  local installer_root
   if installer_root="$(find_local_installer)"; then
-    :
+    echo "==> using local installer at $installer_root"
   else
-    target="$(bootstrap_resolve_dir "${MUXCORE_INSTALL_DIR:-$DEFAULT_INSTALL_DIR}")"
-    fetch_installer "$target"
-    installer_root="$target"
+    installer_root="$(fetch_installer)"
   fi
 
   [[ -f "$installer_root/onboard.sh" ]] || die "onboard.sh missing in $installer_root"
-  for script in onboard.sh install.sh up.sh bootstrap-auth.sh smoke-fixture.sh; do
-    [[ -f "$installer_root/$script" ]] && chmod u+x "$installer_root/$script" 2>/dev/null || true
-  done
+  chmod u+x "$installer_root/onboard.sh" \
+    "$installer_root/install.sh" \
+    "$installer_root/up.sh" \
+    "$installer_root/bootstrap-auth.sh" \
+    "$installer_root/smoke-fixture.sh" 2>/dev/null || true
 
   exec bash "$installer_root/onboard.sh" "$@"
 }

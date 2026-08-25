@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# MuxCore single-machine installer: fetch release assets, lay out dirs, write .env + VIEW-ME.
+# Fetch GitHub Release binaries for ENABLED_MODULES and write .env / VIEW-ME.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
@@ -7,6 +7,8 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 source "$ROOT/lib/common.sh"
 # shellcheck disable=SC1091
 source "$ROOT/lib/github.sh"
+# shellcheck disable=SC1091
+source "$ROOT/lib/modules.sh"
 # shellcheck disable=SC1091
 source "$ROOT/versions.env"
 
@@ -18,34 +20,29 @@ RUN="$ROOT/run"
 require_cmd curl tar uname mkdir chmod
 
 mkdir -p "$BIN" "$CACHE" "$RUN" \
-  "$DATA"/{movies,tvshows,automation,scanner,roots,sqlite,secrets,encryption,library/tv,storage,auth,jellyfin,downloads,request,formats,rename,ffprobe,subtitles/files}
+  "$DATA"/{movies,tvshows,scanner,roots,sqlite,secrets,encryption,library/tv,library/music,storage,auth,import,formats,rename,ffprobe,subtitles/files}
 
 if ! ensure_writable_dir "$BIN" 2>/dev/null; then
   echo "error: cannot write to $BIN (permission denied)" >&2
   exit 1
 fi
 
+if [[ -f "$ROOT/.env" ]]; then
+  # shellcheck disable=SC1091
+  source "$ROOT/.env" || true
+fi
+
+if [[ -z "${ENABLED_MODULES:-}" ]]; then
+  ENABLED_MODULES="$(resolve_enabled_modules "${MUXCORE_LIBRARIES:-Movies,TV}" "${MUXCORE_PLAYBACK:-}" "${MUXCORE_PROFILE:-sqlite}")"
+fi
+export ENABLED_MODULES
+
 read -r OS ARCH < <(detect_os_arch)
 echo "==> platform ${OS}/${ARCH}"
+echo "==> modules: $ENABLED_MODULES"
 
 gh_available() { command -v gh >/dev/null 2>&1 && github_token >/dev/null 2>&1; }
 
-download_url() {
-  local url="$1" dest="$2"
-  if [[ -f "$dest" ]]; then
-    echo "    cached $(basename "$dest")"
-    return 0
-  fi
-  if github_curl -o "$dest.partial" "$url" 2>/dev/null; then
-    mv "$dest.partial" "$dest"
-    echo "    downloaded $(basename "$dest")"
-    return 0
-  fi
-  rm -f "$dest.partial"
-  return 1
-}
-
-# Extract first executable-looking binary from a tarball into $BIN/$name
 extract_binary_from_tarball() {
   local tarball="$1" want_name="$2"
   local tmp
@@ -74,12 +71,12 @@ try_release_asset() {
   local repo="$1" tag="$2" asset_prefix="$3" bin_name="$4"
   local ver="${tag#v}"
   local gh_repo="${GITHUB_ORG:-$(github_org)}/${repo}"
-  local candidates=(
-    "${asset_prefix}_${ver}_${OS}_${ARCH}.tar.gz"
-    "${bin_name}_${ver}_${OS}_${ARCH}.tar.gz"
-    "${asset_prefix}_${OS}_${ARCH}.tar.gz"
-    "${bin_name}_${OS}_${ARCH}.tar.gz"
-  )
+  local candidates="
+${asset_prefix}_${ver}_${OS}_${ARCH}.tar.gz
+${bin_name}_${ver}_${OS}_${ARCH}.tar.gz
+${asset_prefix}_${OS}_${ARCH}.tar.gz
+${bin_name}_${OS}_${ARCH}.tar.gz
+"
 
   if gh_available; then
     local ghtmp
@@ -102,26 +99,24 @@ try_release_asset() {
     rm -rf "$ghtmp"
   fi
 
-  local asset url dest
-  for asset in "${candidates[@]}"; do
+  local asset dest
+  while IFS= read -r asset; do
+    [[ -n "$asset" ]] || continue
     dest="$CACHE/${repo}-${tag}-${asset}"
     if [[ -f "$dest" ]]; then
       echo "    cached $(basename "$dest")"
-    elif github_download_release_asset "$repo" "$tag" "$asset" "$dest.partial" 2>/dev/null \
-      && mv "$dest.partial" "$dest"; then
+    elif github_download_release_asset "$repo" "$tag" "$asset" "$dest"; then
       echo "    downloaded $(basename "$dest")"
-    elif url="$(github_release_download_url "$repo" "$tag" "$asset")" \
-      && download_url "$url" "$dest"; then
-      :
     else
-      rm -f "$dest.partial"
       continue
     fi
     if extract_binary_from_tarball "$dest" "$bin_name"; then
       return 0
     fi
     echo "    WARN: tarball $asset had no usable binary named $bin_name" >&2
-  done
+  done <<EOF
+$candidates
+EOF
   return 1
 }
 
@@ -139,48 +134,49 @@ copy_from_lab() {
   return 1
 }
 
+repo_for_bin() {
+  local name="$1"
+  case "$name" in
+    muxcored) printf '%s\n' core ;;
+    mediauiprox) printf '%s\n' media-ui ;;
+    *) printf '%s\n' "$name" ;;
+  esac
+}
+
 MISSING=()
 LAB_COPIED=()
 
-echo "==> core ${CORE_REPO}@${CORE_TAG}"
-if ! try_release_asset "$CORE_REPO" "$CORE_TAG" "$CORE_ASSET_PREFIX" muxcored; then
-  if copy_from_lab muxcored; then
-    LAB_COPIED+=(muxcored)
-  else
-    MISSING+=(muxcored)
-  fi
-fi
-
-echo "==> modules (GitHub releases, then laptop lab fallback)"
-while IFS= read -r line; do
-  [[ -z "$line" || "$line" =~ ^# ]] && continue
-  repo_name="${line%%=*}"
-  tag="${line#*=}"
-  bin_name="$repo_name"
-  echo "  - ${repo_name}@${tag}"
+fetch_one() {
+  local bin_name="$1"
+  local repo tag
   if [[ -x "$BIN/$bin_name" ]]; then
-    echo "    already present"
-    continue
+    echo "  - $bin_name already present"
+    return 0
   fi
-  if try_release_asset "$repo_name" "$tag" "$repo_name" "$bin_name"; then
-    continue
+  repo="$(repo_for_bin "$bin_name")"
+  tag="$(module_tag "$bin_name")"
+  echo "  - ${repo}@${tag} → $bin_name"
+  if try_release_asset "$repo" "$tag" "$bin_name" "$bin_name"; then
+    return 0
+  fi
+  if [[ "$bin_name" == muxcored ]]; then
+    if try_release_asset "$CORE_REPO" "$CORE_TAG" "$CORE_ASSET_PREFIX" muxcored; then
+      return 0
+    fi
   fi
   if copy_from_lab "$bin_name"; then
     LAB_COPIED+=("$bin_name")
-    continue
+    return 0
   fi
   MISSING+=("$bin_name@$tag")
-  echo "    MISSING: no GitHub Release binary for ${repo_name}@${tag} and no lab bin" >&2
-done <<<"$MODULES"
+  echo "    MISSING: no GitHub Release binary for ${repo}@${tag}" >&2
+  return 1
+}
 
-AUTH_LOCAL_TAG=""
-while IFS= read -r line; do
-  [[ -z "$line" || "$line" =~ ^# ]] && continue
-  if [[ "${line%%=*}" == "auth-local" ]]; then
-    AUTH_LOCAL_TAG="${line#*=}"
-    break
-  fi
-done <<<"$MODULES"
+echo "==> downloading selected modules"
+for m in $ENABLED_MODULES; do
+  fetch_one "$m" || true
+done
 
 echo "==> helper CLIs (${HELPER_BINS})"
 for h in $HELPER_BINS; do
@@ -188,55 +184,39 @@ for h in $HELPER_BINS; do
     echo "  - $h already present"
     continue
   fi
-  if [[ "$h" == authctl && -n "$AUTH_LOCAL_TAG" ]] \
-    && try_release_asset "auth-local" "$AUTH_LOCAL_TAG" authctl authctl; then
+  if [[ "$h" == authctl ]] && try_release_asset "auth-local" "$(module_tag auth-local)" authctl authctl; then
+    continue
+  fi
+  if [[ "$h" == gettoken ]] && try_release_asset "muxcorectl-cli" "v0.1.0" gettoken gettoken; then
     continue
   fi
   if copy_from_lab "$h"; then
     LAB_COPIED+=("$h")
     continue
   fi
-  if command -v go >/dev/null 2>&1; then
-    case "$h" in
-      authctl)
-        if [[ -d "$ROOT/../auth-local/cmd/authctl" ]]; then
-          echo "  - building authctl from sibling auth-local"
-          (cd "$ROOT/../auth-local" && go build -o "$BIN/authctl" ./cmd/authctl)
-          continue
-        fi
-        ;;
-      gettoken)
-        if try_release_asset "muxcorectl-cli" "v0.1.0" gettoken gettoken; then
-          continue
-        fi
-        if [[ -d "$ROOT/../_mvp/cmd/gettoken" ]]; then
-          echo "  - building gettoken from sibling _mvp"
-          (cd "$ROOT/../_mvp" && go build -o "$BIN/gettoken" ./cmd/gettoken)
-          continue
-        fi
-        ;;
-    esac
-  fi
   MISSING+=("$h")
-  echo "  - MISSING helper $h (bootstrap-auth will need it)" >&2
+  echo "  - MISSING helper $h" >&2
 done
 
-echo "==> writing .env (TLS-off-dev defaults)"
-if [[ -f "$ROOT/.env" ]]; then
-  echo "    keeping existing .env (delete it to regenerate from .env.example)"
-else
+echo "==> writing .env"
+if [[ ! -f "$ROOT/.env" ]]; then
   cp "$ROOT/.env.example" "$ROOT/.env"
 fi
 # shellcheck disable=SC1091
 source "$ROOT/.env"
 write_view_me "$ROOT"
 
-ESSENTIAL=(muxcored api-rest auth-local database-sqlite secrets-file admin-ui)
+ESSENTIAL="muxcored api-rest auth-local secrets-file admin-ui"
+if module_enabled database-postgres; then
+  ESSENTIAL="$ESSENTIAL database-postgres"
+else
+  ESSENTIAL="$ESSENTIAL database-sqlite"
+fi
 ESSENTIAL_OK=1
-for e in "${ESSENTIAL[@]}"; do
+for e in $ESSENTIAL; do
   if [[ ! -x "$BIN/$e" ]]; then
     ESSENTIAL_OK=0
-    break
+    echo "FAIL: missing essential binary bin/$e" >&2
   fi
 done
 
@@ -245,25 +225,13 @@ echo "======== install summary ========"
 echo "root:     $ROOT"
 echo "bin:      $BIN"
 echo "platform: ${OS}/${ARCH}"
-if ((${#LAB_COPIED[@]})); then
+if [[ ${#LAB_COPIED[@]} -gt 0 ]]; then
   echo "lab copies: ${LAB_COPIED[*]}"
-  echo "  (module GitHub Releases often lack binary assets yet — lab bins are OK for laptop demo)"
 fi
-if ((${#MISSING[@]})); then
+if [[ ${#MISSING[@]} -gt 0 ]]; then
   echo "MISSING:  ${MISSING[*]}"
-  echo
-  echo "Place release binaries into bin/ or set MUXCORE_LAB_BIN to a directory of built"
-  echo "module binaries (e.g. MuxCore/_mvp/bin), then re-run ./install.sh"
-  echo "See README.md — Go is optional when using release/lab binaries; Docker is optional."
-else
-  echo "all pinned binaries present"
+  echo "Place release binaries in bin/ or set MUXCORE_LAB_BIN, then re-run ./install.sh"
 fi
-echo
-echo "Next:"
-echo "  ./onboard.sh            # guided first-run walkthrough (recommended)"
-echo "  ./up.sh                 # start host stack"
-echo "  ./bootstrap-auth.sh     # create admin + token"
-echo "  ./smoke-fixture.sh      # health check"
 echo "VIEW-ME: $RUN/VIEW-ME.txt"
 if [[ "$ESSENTIAL_OK" -ne 1 ]]; then
   exit 1

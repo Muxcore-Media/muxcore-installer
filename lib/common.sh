@@ -1,35 +1,6 @@
 # Shared helpers for muxcore-installer scripts.
 # shellcheck shell=bash
 
-_ONBOARD_READ_FD=0
-_ONBOARD_TTY_OPENED=0
-
-# curl | bash leaves stdin at EOF; read answers from the controlling TTY instead.
-onboard_open_tty() {
-  if [[ "$_ONBOARD_TTY_OPENED" == 1 ]]; then
-    return 0
-  fi
-  if [[ -r /dev/tty ]]; then
-    exec 3</dev/tty
-    _ONBOARD_READ_FD=3
-    _ONBOARD_TTY_OPENED=1
-    return 0
-  fi
-  if [[ ! -t 0 ]]; then
-    echo "error: interactive setup requires a terminal (no /dev/tty)." >&2
-    echo "Save the script and run it directly:" >&2
-    echo "  curl -fsSL https://getmuxcore.zem.systems -o get-onboard.sh && bash get-onboard.sh" >&2
-    return 1
-  fi
-  _ONBOARD_READ_FD=0
-  _ONBOARD_TTY_OPENED=1
-  return 0
-}
-
-onboard_require_tty() {
-  onboard_open_tty || exit 1
-}
-
 ensure_writable_dir() {
   local d="$1"
   if [[ -e "$d" && ! -d "$d" ]]; then
@@ -109,33 +80,32 @@ write_view_me() {
   mkdir -p "$(dirname "$out")"
   local user="${MVP_ADMIN_USER:-admin}"
   local pass="${MVP_ADMIN_PASSWORD:-admin-dev-only}"
+  local player=""
+  if [[ "${MVP_ENABLE_MEDIA_UI:-0}" != "0" ]]; then
+    player="  Player:       http://127.0.0.1:5173"
+  fi
   cat >"$out" <<EOF
 MuxCore — you're ready
 
   Admin UI:     http://localhost:8082
                 login: ${user} / ${pass}
-
-  Consumer UI:  http://127.0.0.1:5173
-                (optional; enable with MVP_ENABLE_MEDIA_UI=1 + media-ui dist)
+${player}
 
   Core health:  http://127.0.0.1:8080/health
   REST API:     http://127.0.0.1:18080/api/v1/health
-  Jellyfin:     http://127.0.0.1:8475/healthz
   Monitor:      http://127.0.0.1:9203/status
 
   Movie library: ${MVP_LIBRARY_ROOT:-$root/data/library}
   TV library:    ${MVP_TV_LIBRARY_ROOT:-$root/data/library/tv}
-  Incoming:      ${MVP_DOWNLOADS_DIR:-$root/data/downloads}
+  Import folder: ${MVP_IMPORT_DIR:-${MVP_DOWNLOADS_DIR:-$root/data/import}}
 
 Useful admin pages
   /dashboard/monitor
   /modules
-  /automation
-  /jellyfin
   /events?filter=health
 
 Metadata
-  TMDB_FIXTURE=${TMDB_FIXTURE:-1} (offline demo titles when no API key)
+  TMDB_FIXTURE=${TMDB_FIXTURE:-1} (offline sample titles when no API key)
 
 Start:  ./up.sh
 Stop:   ./up.sh stop
@@ -145,87 +115,14 @@ EOF
   echo "wrote $out"
 }
 
-onboard_step() {
-  if [[ -n "${GUM_BIN:-}" ]] && [[ -f "${UI_ROOT:-}/lib/ui.sh" || -f "$(dirname "${BASH_SOURCE[0]}")/ui.sh" ]]; then
-    # shellcheck disable=SC1091
-    source "$(dirname "${BASH_SOURCE[0]}")/ui.sh"
-    ui_step "$@"
-    return
-  fi
-  printf '\n── Step %s/%s — %s ──\n' "$1" "$2" "$3"
-}
-
-onboard_prompt() {
-  if [[ -n "${GUM_BIN:-}" ]]; then
-    # shellcheck disable=SC1091
-    source "$(dirname "${BASH_SOURCE[0]}")/ui.sh"
-    ui_input "$@"
-    return
-  fi
-  local var="$1" q="$2" def="${3:-}" ans
-  onboard_require_tty
-  if [[ -n "$def" ]]; then
-    read -r -u "$_ONBOARD_READ_FD" -p "$q [$def]: " ans || true
-    ans="${ans:-$def}"
-  else
-    read -r -u "$_ONBOARD_READ_FD" -p "$q: " ans || true
-  fi
-  printf -v "$var" '%s' "$ans"
-}
-
-onboard_prompt_secret() {
-  if [[ -n "${GUM_BIN:-}" ]]; then
-    # shellcheck disable=SC1091
-    source "$(dirname "${BASH_SOURCE[0]}")/ui.sh"
-    ui_input_secret "$@"
-    return
-  fi
-  local var="$1" q="$2" def="${3:-}" ans
-  onboard_require_tty
-  if [[ -n "$def" ]]; then
-    read -r -s -u "$_ONBOARD_READ_FD" -p "$q [press Enter to keep current]: " ans || true
-    echo >&"$_ONBOARD_READ_FD"
-    ans="${ans:-$def}"
-  else
-    read -r -s -u "$_ONBOARD_READ_FD" -p "$q: " ans || true
-    echo >&"$_ONBOARD_READ_FD"
-    ans="${ans:-$def}"
-  fi
-  printf -v "$var" '%s' "$ans"
-}
-
-onboard_yesno() {
-  if [[ -n "${GUM_BIN:-}" ]]; then
-    # shellcheck disable=SC1091
-    source "$(dirname "${BASH_SOURCE[0]}")/ui.sh"
-    local def="${2:-y}"
-    if [[ "$def" =~ ^[Yy] ]]; then
-      ui_confirm "$1" true
-    else
-      ui_confirm "$1" false
-    fi
-    return
-  fi
-  local q="$1" def="${2:-y}" ans
-  onboard_require_tty
-  read -r -u "$_ONBOARD_READ_FD" -p "$q [$def]: " ans || true
-  ans="${ans:-$def}"
-  [[ "$ans" =~ ^[Yy] ]]
-}
-
 env_set() {
   local envf="$1" key="$2" val="$3"
   local tmp
   tmp="$(mktemp)"
   touch "$envf"
-  if grep -q "^${key}=" "$envf" 2>/dev/null; then
-    # shellcheck disable=SC2016
-    awk -v k="$key" -v v="$val" 'BEGIN{FS=OFS="="} $1==k{$0=k"="v} {print}' "$envf" >"$tmp"
-    mv "$tmp" "$envf"
-  else
-    printf '%s=%s\n' "$key" "$val" >>"$envf"
-    rm -f "$tmp"
-  fi
+  grep -v "^${key}=" "$envf" >"$tmp" || true
+  printf '%s=%s\n' "$key" "$val" >>"$tmp"
+  mv "$tmp" "$envf"
 }
 
 resolve_install_dir() {
