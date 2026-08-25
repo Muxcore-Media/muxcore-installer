@@ -40,7 +40,7 @@ prereqs_have_sudo() {
 }
 
 prereqs_install_packages() {
-  local family pkgs=("$@")
+  local pkgs=("$@")
   local joined
   joined="$(IFS=' '; echo "${pkgs[*]}")"
   if ui_noninteractive; then
