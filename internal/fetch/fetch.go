@@ -181,11 +181,19 @@ func tryReleaseAsset(o Options, cache, bin, repo, tag, binName, osName, arch str
 	for _, asset := range candidates {
 		dest := filepath.Join(cache, fmt.Sprintf("%s-%s-%s", repo, tag, asset))
 		if !isFile(dest) {
-			url := ghrelease.AssetURL(repo, tag, asset)
 			progress := func(read, total int64) {
 				emit(o, Event{Module: binName, Kind: EventProgress, Read: read, Total: total, Detail: asset})
 			}
+			url := ghrelease.AssetURL(repo, tag, asset)
 			code, err := ghrelease.Download(url, dest, token, progress)
+			// The plain releases/download URL 404s for private repos even
+			// with a valid token (GitHub requires the numeric asset-ID API
+			// endpoint for those) — retry that way before giving up.
+			if (err != nil || code != 200) && token != "" {
+				if id, idErr := ghrelease.AssetIDByName(repo, tag, asset, token); idErr == nil {
+					code, err = ghrelease.Download(ghrelease.AssetByIDURL(repo, id), dest, token, progress)
+				}
+			}
 			if err != nil || code != 200 {
 				if code == 401 || code == 403 || code == 404 {
 					emit(o, Event{Module: binName, Kind: EventDetail, Detail: fmt.Sprintf("%s: HTTP %d (private or missing)", asset, code)})
