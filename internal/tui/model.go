@@ -60,6 +60,7 @@ type Model struct {
 	// legal
 	legalVP   viewport.Model
 	legalMenu *Menu
+	legalRead bool // true once the user has scrolled the statement to the bottom
 
 	// install dir / browse (also reused by media-root and per-kind path edits)
 	pathMenu   *Menu
