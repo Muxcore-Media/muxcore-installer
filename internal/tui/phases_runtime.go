@@ -35,11 +35,15 @@ func (m *Model) updateRuntimeKeep(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.answers.Runtime, m.answers.KeepMode = "host", "system"
 		case "compose:compose":
 			m.answers.Runtime, m.answers.KeepMode = "compose", "compose"
-			if !prereqs.HaveCompose() && !prereqs.HaveDocker() {
-				// We still let them proceed — the pipeline will surface a
-				// clear error if Compose is unavailable at install time —
-				// but flag it now so it's not a surprise later.
-				m.runtimeMenu.Items[3].Desc = "Docker/Podman Compose not detected yet — install it before we start MuxCore, or pick another option"
+			// HaveCompose() only checks the CLI is on PATH — it succeeds even
+			// with the daemon stopped (`docker compose version` needs no
+			// daemon). HaveDocker() actually dials the daemon, which is what
+			// `up -d` needs, so it's the one that matters for "will this work".
+			switch {
+			case !prereqs.HaveCompose():
+				m.runtimeMenu.Items[3].Desc = "Docker/Podman Compose not found on PATH — install it before we start MuxCore, or pick another option"
+			case !prereqs.HaveDocker():
+				m.runtimeMenu.Items[3].Desc = "Docker is installed but its daemon isn't running — start it before we start MuxCore, or pick another option"
 			}
 		}
 		m.initLibraries()

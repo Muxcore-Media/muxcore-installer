@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/Muxcore-Media/muxcore-installer/internal/wizard"
 )
@@ -33,6 +34,7 @@ type workState struct {
 	bar        progress.Model
 	barPct     float64
 	barActive  bool
+	barLabel   string
 	vp         viewport.Model
 	lines      []string
 	fatalErr   error
@@ -76,6 +78,12 @@ func (w *workState) resize(width, height int) {
 func (w *workState) appendLine(kind wizard.StepKind, text string) {
 	if text == "" {
 		return
+	}
+	// Long lines (docker/compose errors especially) are common here — wrap
+	// them to the pane width instead of letting them overflow, which used
+	// to make the bordered box's own width calculation misbehave.
+	if w.vp.Width > 0 {
+		text = lipgloss.NewStyle().Width(w.vp.Width).Render(text)
 	}
 	styled := styleLogLine.Render(text)
 	if kind == wizard.KindWarn {
@@ -157,8 +165,11 @@ func (m *Model) handleWorkProgress(msg workProgressMsg) (tea.Model, tea.Cmd) {
 		}
 	case wizard.KindProgress:
 		w.barActive = true
+		w.barLabel = msg.Text
 		if msg.Total > 0 {
 			w.barPct = float64(msg.Read) / float64(msg.Total)
+		} else {
+			w.barPct = 0
 		}
 		return m, nil
 	case wizard.KindLine:
@@ -273,6 +284,11 @@ func (m *Model) viewWork() string {
 		}
 		b.WriteString("  " + mark + " " + label + "\n")
 		if state == stepActive && s.ID == "fetch" && w.barActive {
+			label := w.barLabel
+			if label == "" {
+				label = "…"
+			}
+			b.WriteString("    " + styleHint.Render(label) + "\n")
 			b.WriteString("    " + w.bar.ViewAs(w.barPct) + "\n")
 		}
 	}

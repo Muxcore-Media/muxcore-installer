@@ -114,9 +114,10 @@ type Model struct {
 
 	hwMenu *Menu
 
-	preflightDone bool
-	preflightBusy []string
-	preflightSpin spinner.Model
+	preflightDone      bool
+	preflightBusy      []string
+	preflightDockerBad bool
+	preflightSpin      spinner.Model
 
 	summaryConfirm bool
 

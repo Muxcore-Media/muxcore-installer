@@ -2,6 +2,7 @@ package wizard
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"github.com/Muxcore-Media/muxcore-installer/internal/execstream"
 	"github.com/Muxcore-Media/muxcore-installer/internal/fetch"
 	"github.com/Muxcore-Media/muxcore-installer/internal/modules"
+	"github.com/Muxcore-Media/muxcore-installer/internal/prereqs"
 	"github.com/Muxcore-Media/muxcore-installer/internal/seedroots"
 )
 
@@ -255,6 +257,7 @@ func (p *Pipeline) stepFetch(ctx context.Context) error {
 			switch e.Kind {
 			case fetch.EventStart:
 				p.emit(StepFetch, KindLine, fmt.Sprintf("- %s → %s", e.Module, e.Detail))
+				p.Emit(Progress{Step: StepFetch, Kind: KindProgress, Text: e.Module})
 			case fetch.EventProgress:
 				p.Emit(Progress{Step: StepFetch, Kind: KindProgress, Text: e.Module, Read: e.Read, Total: e.Total})
 			case fetch.EventDetail:
@@ -313,13 +316,18 @@ func (p *Pipeline) stepStart(ctx context.Context) error {
 			p.emit(StepStart, KindError, err.Error())
 			return err
 		}
+		if !prereqs.HaveDocker() {
+			msg := "Docker's daemon isn't reachable — start Docker (Docker Desktop, or `sudo systemctl start docker`) and try again"
+			p.emit(StepStart, KindError, msg)
+			return errors.New(msg)
+		}
 		args := append(bin[1:], "pull")
 		if err := execstream.Command(ctx, "compose", a.Root, nil, sink, bin[0], args...); err != nil {
 			p.emit(StepStart, KindWarn, "pull failed, trying anyway: "+err.Error())
 		}
 		upArgs := append(bin[1:], "up", "-d")
 		if err := execstream.Command(ctx, "compose", a.Root, nil, sink, bin[0], upArgs...); err != nil {
-			p.emit(StepStart, KindError, err.Error())
+			p.emit(StepStart, KindError, "docker compose up failed — is the Docker daemon still running? ("+err.Error()+")")
 			return err
 		}
 		p.emit(StepStart, KindDone, "")
