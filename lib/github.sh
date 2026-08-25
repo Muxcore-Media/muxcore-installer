@@ -67,18 +67,92 @@ github_api_curl() {
   fi
 }
 
+github_prompt_token() {
+  local tok=""
+  if [[ "${MUXCORE_NONINTERACTIVE:-}" == 1 ]]; then
+    echo "error: GitHub returned a private/unavailable release and no token is set." >&2
+    echo "Set GITHUB_TOKEN or write one to ~/.config/muxcore/github.token" >&2
+    return 1
+  fi
+  echo
+  echo "This GitHub release looks private (closed alpha). Paste a token with repo"
+  echo "(and read:packages if you chose Docker Compose)."
+  if type ui_password >/dev/null 2>&1; then
+    ui_password tok "GitHub personal access token" ""
+  else
+    if [[ -r /dev/tty ]]; then
+      printf 'GitHub token: ' >/dev/tty
+      # shellcheck disable=SC2162
+      read -s tok </dev/tty || true
+      echo >/dev/tty
+    else
+      printf 'GitHub token: ' >&2
+      # shellcheck disable=SC2162
+      read -s tok || true
+      echo >&2
+    fi
+  fi
+  [[ -n "$tok" ]] || return 1
+  mkdir -p "$HOME/.config/muxcore"
+  printf '%s\n' "$tok" >"$HOME/.config/muxcore/github.token"
+  chmod 600 "$HOME/.config/muxcore/github.token"
+  export GITHUB_TOKEN="$tok"
+  echo "saved token to ~/.config/muxcore/github.token"
+  return 0
+}
+
+# Download a URL. Use a token when one is already set; otherwise try public.
+# On 401/403/404 with no token, prompt and retry.
+github_fetch() {
+  local dest="$1"
+  shift
+  local code tmp token=""
+  tmp="${dest}.partial"
+  token="$(github_token 2>/dev/null || true)"
+  if [[ -n "$token" ]]; then
+    code="$(curl --proto '=https' --tlsv1.2 -sS -o "$tmp" -w '%{http_code}' \
+      -H "Authorization: Bearer ${token}" \
+      -H "Accept: application/octet-stream" \
+      "$@" || echo 000)"
+  else
+    code="$(curl --proto '=https' --tlsv1.2 -sS -o "$tmp" -w '%{http_code}' "$@" || echo 000)"
+  fi
+  if [[ "$code" == 200 && -s "$tmp" ]]; then
+    mv "$tmp" "$dest"
+    return 0
+  fi
+  rm -f "$tmp"
+  if [[ -z "$token" && ( "$code" == 401 || "$code" == 403 || "$code" == 404 ) ]]; then
+    github_prompt_token || return 1
+    token="$(github_token 2>/dev/null || true)"
+    [[ -n "$token" ]] || return 1
+    code="$(curl --proto '=https' --tlsv1.2 -sS -o "$tmp" -w '%{http_code}' \
+      -H "Authorization: Bearer ${token}" \
+      -H "Accept: application/octet-stream" \
+      "$@" || echo 000)"
+    if [[ "$code" == 200 && -s "$tmp" ]]; then
+      mv "$tmp" "$dest"
+      return 0
+    fi
+    rm -f "$tmp"
+  fi
+  return 1
+}
+
 github_download_release_asset() {
   local repo="$1" tag="$2" asset_name="$3" dest="$4"
-  local token asset_id
+  local url token asset_id
+  url="$(github_release_download_url "$repo" "$tag" "$asset_name")"
+  if github_fetch "$dest" "$url"; then
+    return 0
+  fi
   token="$(github_token 2>/dev/null || true)"
   [[ -n "$token" ]] || return 1
+  command -v jq >/dev/null 2>&1 || return 1
   asset_id="$(github_api_curl \
     "https://api.github.com/repos/$(github_org)/${repo}/releases/tags/${tag}" \
     | jq -r --arg n "$asset_name" '.assets[]? | select(.name == $n) | .id' | head -1)"
   [[ -n "$asset_id" && "$asset_id" != null ]] || return 1
-  curl -fsSL \
-    -H "Authorization: Bearer ${token}" \
-    -H "Accept: application/octet-stream" \
-    -o "$dest" \
+  github_fetch "$dest" \
     "https://api.github.com/repos/$(github_org)/${repo}/releases/assets/${asset_id}"
 }

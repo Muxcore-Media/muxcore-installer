@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Start/stop the MuxCore host stack from installer bin/ (release or lab binaries).
+# Start/stop the MuxCore host stack from installer bin/ (selected modules only).
 # Usage: ./up.sh | ./up.sh stop
 set -euo pipefail
 
@@ -11,10 +11,10 @@ DATA="$ROOT/data"
 # shellcheck disable=SC1091
 [[ -f "$ROOT/.env" ]] || {
   if [[ -f "$ROOT/.env.example" ]]; then
-    echo "==> no .env; copying .env.example (fixture defaults)"
+    echo "==> no .env; copying .env.example"
     cp "$ROOT/.env.example" "$ROOT/.env"
   else
-    echo "FAIL: missing $ROOT/.env (and no .env.example) — run ./install.sh first" >&2
+    echo "FAIL: missing $ROOT/.env — run ./onboard.sh or ./install.sh first" >&2
     exit 1
   fi
 }
@@ -22,14 +22,23 @@ DATA="$ROOT/data"
 source "$ROOT/.env" || true
 # shellcheck disable=SC1091
 source "$ROOT/versions.env"
+# shellcheck disable=SC1091
+source "$ROOT/lib/common.sh"
+# shellcheck disable=SC1091
+source "$ROOT/lib/modules.sh"
 
 export MUXCORE_INSECURE_DISABLE_TLS=true
 export MUXCORE_LOG_LEVEL="${MUXCORE_LOG_LEVEL:-info}"
 export MUXCORE_CONFIG="${MUXCORE_CONFIG:-$ROOT/muxcore.json}"
 MESH="${MUXCORE_MESH_ADDR:-127.0.0.1:9090}"
 
+if [[ -z "${ENABLED_MODULES:-}" ]]; then
+  ENABLED_MODULES="$(resolve_enabled_modules "${MUXCORE_LIBRARIES:-Movies,TV}" "${MUXCORE_PLAYBACK:-}" "${MUXCORE_PROFILE:-sqlite}")"
+fi
+export ENABLED_MODULES
+
 mkdir -p "$BIN" "$RUN" \
-  "$DATA"/{movies,tvshows,automation,scanner,roots,sqlite,secrets,encryption,library/tv,storage,auth,jellyfin,downloads,request,formats,rename,ffprobe,subtitles/files}
+  "$DATA"/{movies,tvshows,scanner,roots,sqlite,secrets,encryption,library/tv,library/music,storage,auth,import,formats,rename,ffprobe,subtitles/files}
 
 have_bin() { [[ -x "$BIN/$1" ]]; }
 
@@ -46,11 +55,11 @@ start_one() {
   echo $! >"$pidfile"
 }
 
-# start_mod NAME BIN_NAME ENV...  — skips with WARN when binary missing
 start_mod() {
   local name="$1" bin_name="$2"; shift 2
+  module_enabled "$name" || return 0
   if ! have_bin "$bin_name"; then
-    echo "WARN: skip $name — missing bin/$bin_name (re-run ./install.sh or set MUXCORE_LAB_BIN)" >&2
+    echo "WARN: skip $name — missing bin/$bin_name" >&2
     return 0
   fi
   start_one "$name" env "$@" "$BIN/$bin_name"
@@ -71,12 +80,9 @@ stop_all() {
   done
 }
 
-# Optional profile: sqlite (default) | postgres
 PROFILE="${MUXCORE_PROFILE:-${INSTALLER_PROFILE:-sqlite}}"
 
 ensure_postgres() {
-  # When PROFILE=postgres, prefer an existing DATABASE_URL / PG* env; otherwise
-  # start a local Docker Postgres if Docker is available.
   if [[ -n "${DATABASE_URL:-}" || -n "${PGHOST:-}" ]]; then
     echo "==> postgres profile: using existing DATABASE_URL/PG* env"
     return 0
@@ -106,8 +112,8 @@ EOF
   fi
   export PGHOST=127.0.0.1 PGPORT=5432 PGUSER=muxcore PGPASSWORD=muxcore PGDATABASE=muxcore PGSSLMODE=disable
   export DATABASE_URL="postgres://muxcore:muxcore@127.0.0.1:5432/muxcore?sslmode=disable"
-  # Wait for accept
-  for _ in $(seq 1 40); do
+  local _
+  for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40; do
     if docker exec "$name" pg_isready -U muxcore >/dev/null 2>&1; then
       return 0
     fi
@@ -121,20 +127,8 @@ usage() {
   cat <<'EOF'
 usage: ./up.sh [stop]
 
-  (default)  Start host stack from bin/ (default platform + media modules)
+  (default)  Start host stack from bin/ (modules listed in ENABLED_MODULES)
   stop       Stop all processes tracked in run/*.pid
-
-Optional env:
-  MUXCORE_PROFILE=sqlite|postgres   (default sqlite)
-    postgres — skip database-sqlite; start database-postgres; start local
-               Docker Postgres if DATABASE_URL/PG* unset (skips hard-fail
-               only when Docker unavailable and no DATABASE_URL)
-  MUXCORE_OBSERVABILITY=1 — also start metrics-prometheus + tracing-otlp when
-               binaries are present (health-monitor remains on by default)
-
-Requires bin/muxcored (from ./install.sh or MUXCORE_LAB_BIN). Modules listed in
-versions.env are started when their binary is present; missing modules are skipped
-with a warning (except muxcored, which fails hard).
 EOF
 }
 
@@ -142,8 +136,7 @@ cmd="${1:-up}"
 case "$cmd" in
   -h|--help) usage; exit 0 ;;
   stop) stop_all; exit 0 ;;
-  up|"")
-    ;;
+  up|"") ;;
   *)
     echo "unknown arg: $cmd" >&2
     usage >&2
@@ -155,17 +148,14 @@ if ! have_bin muxcored; then
   cat >&2 <<EOF
 FAIL: missing bin/muxcored
 
-Run ./install.sh to download release assets (or copy lab binaries), then re-run.
-Lab fallback: export MUXCORE_LAB_BIN=/path/to/_mvp/bin && ./install.sh
-
-This installer does not build the monorepo for you.
+Run ./onboard.sh or ./install.sh first.
 EOF
   exit 1
 fi
 
 stop_all
 
-echo "==> host stack (profile=${PROFILE}; default + media modules)"
+echo "==> host stack (profile=${PROFILE}; ${ENABLED_MODULES})"
 
 if [[ "$PROFILE" == "postgres" ]]; then
   ensure_postgres
@@ -181,10 +171,12 @@ start_one core env \
   MUXCORE_LOG_LEVEL="${MUXCORE_LOG_LEVEL:-info}" \
   "$BIN/muxcored"
 
-for _ in $(seq 1 40); do
+_i=0
+while [[ "$_i" -lt 40 ]]; do
   code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/health || echo 000)
   [[ "$code" == "200" || "$code" == "503" ]] && break
   sleep 0.5
+  _i=$((_i + 1))
 done
 
 C=(MUXCORE_GRPC_ADDR="$MESH" MUXCORE_INSECURE_DISABLE_TLS=true)
@@ -253,7 +245,6 @@ start_mod health-monitor health-monitor \
   HEALTH_MONITOR_HTTP_ADDR="${HEALTH_MONITOR_HTTP_ADDR:-:9203}" \
   HEALTH_MONITOR_INTERVAL="${HEALTH_MONITOR_INTERVAL:-5s}"
 
-# Optional metrics/tracing (MUXCORE_OBSERVABILITY=1)
 if [[ "${MUXCORE_OBSERVABILITY:-0}" == "1" || "${MUXCORE_OBSERVABILITY:-}" == "true" ]]; then
   start_mod metrics-prometheus metrics-prometheus \
     "${C[@]}" MUXCORE_MODULE_ID=metrics-prometheus \
@@ -281,6 +272,11 @@ start_mod metadata-tmdb metadata-tmdb \
   MUXCORE_CFG_TMDB_API_KEY="${MUXCORE_CFG_TMDB_API_KEY:-${TMDB_API_KEY:-}}" \
   TMDB_FIXTURE="${TMDB_FIXTURE:-1}"
 
+start_mod metadata-musicbrainz metadata-musicbrainz \
+  "${C[@]}" MUXCORE_MODULE_ID=metadata-musicbrainz \
+  MUSICBRAINZ_FIXTURE="${MUSICBRAINZ_FIXTURE:-1}" \
+  METADATA_GRPC_ADDR=":9413"
+
 start_mod media-movies media-movies \
   "${C[@]}" MUXCORE_MODULE_ID=media-movies \
   MOVIES_DB_PATH="$DATA/movies/movies.db" MOVIES_IMAGE_DIR="$DATA/movies/images" \
@@ -291,18 +287,30 @@ start_mod media-tvshows media-tvshows \
   TVSHOWS_DB_PATH="$DATA/tvshows/tvshows.db" TVSHOWS_IMAGE_DIR="$DATA/tvshows/images" \
   TVSHOWS_GRPC_ADDR=":9440" TVSHOWS_HTTP_ADDR=":9450"
 
-start_mod media-automation media-automation \
-  "${C[@]}" MUXCORE_MODULE_ID=media-automation \
-  MUXCORE_MESH_DIAL_LOCAL=true \
-  AUTOMATION_DB_PATH="$DATA/automation/automation.db" \
-  AUTOMATION_GRPC_ADDR=":9460" \
-  AUTOMATION_EVENT_SUBSCRIBE_DELAY=1s \
-  AUTOMATION_DOWNLOAD_DIR="${MVP_DOWNLOADS_DIR:-$DATA/downloads}"
+MUSIC_LIBRARY_ROOT="${MVP_MUSIC_LIBRARY_ROOT:-$DATA/library/music}"
+mkdir -p "$DATA/music" "$MUSIC_LIBRARY_ROOT"
+start_mod media-music media-music \
+  "${C[@]}" MUXCORE_MODULE_ID=media-music \
+  MUSIC_DATA_DIR="$DATA/music" MUSIC_LIBRARY_DIR="$MUSIC_LIBRARY_ROOT" \
+  MUSIC_GRPC_ADDR=":9640" MUXCORE_HTTP_ADDR=":9641"
+
+mkdir -p "$DATA/books" "$DATA/comics" "$DATA/audiobooks"
+start_mod media-books media-books \
+  "${C[@]}" MUXCORE_MODULE_ID=media-books \
+  BOOKS_DATA_DIR="$DATA/books" MUXCORE_HTTP_ADDR=":9651"
+
+start_mod media-comics media-comics \
+  "${C[@]}" MUXCORE_MODULE_ID=media-comics \
+  COMICS_DATA_DIR="$DATA/comics" MUXCORE_HTTP_ADDR=":9661"
+
+start_mod media-audiobooks media-audiobooks \
+  "${C[@]}" MUXCORE_MODULE_ID=media-audiobooks \
+  AUDIOBOOKS_DATA_DIR="$DATA/audiobooks" MUXCORE_HTTP_ADDR=":9671"
 
 LIBRARY_ROOT="${MVP_LIBRARY_ROOT:-$DATA/library}"
 TV_LIBRARY_ROOT="${MVP_TV_LIBRARY_ROOT:-$DATA/library/tv}"
-INCOMING_DIR="${MVP_DOWNLOADS_DIR:-$DATA/downloads}"
-mkdir -p "$LIBRARY_ROOT" "$TV_LIBRARY_ROOT" "$INCOMING_DIR" \
+IMPORT_DIR="${MVP_IMPORT_DIR:-${MVP_DOWNLOADS_DIR:-$DATA/import}}"
+mkdir -p "$LIBRARY_ROOT" "$TV_LIBRARY_ROOT" "$IMPORT_DIR" \
   "$DATA/formats" "$DATA/rename" "$DATA/ffprobe" "$DATA/subtitles/files"
 
 start_mod media-custom-formats media-custom-formats \
@@ -333,7 +341,7 @@ start_mod media-scanner media-scanner \
   SCANNER_DB_PATH="$DATA/scanner/scanner.db" \
   SCANNER_LIBRARY_ROOT="$LIBRARY_ROOT" \
   SCANNER_TV_LIBRARY_ROOT="$TV_LIBRARY_ROOT" \
-  SCANNER_DEFAULT_WATCH_DIR="$INCOMING_DIR" \
+  SCANNER_DEFAULT_WATCH_DIR="$IMPORT_DIR" \
   SCANNER_GRPC_ADDR=":9470" \
   SCANNER_IMPORT_MODE=copy \
   SCANNER_MIN_VIDEO_BYTES=0
@@ -342,31 +350,59 @@ start_mod media-root-folders media-root-folders \
   "${C[@]}" MUXCORE_MODULE_ID=media-root-folders \
   ROOTS_DB_PATH="$DATA/roots/roots.db"
 
-start_mod request-media request-media \
-  "${C[@]}" MUXCORE_MODULE_ID=request-media \
-  MUXCORE_MESH_DIAL_LOCAL=true \
-  REQUEST_GRPC_ADDR=":9481" \
-  REQUEST_HTTP_ADDR=":9380" \
-  REQUEST_DATA_DIR="$DATA/request"
-
 start_mod notification-default notification-default \
   "${C[@]}" MUXCORE_MODULE_ID=notification-default \
   NOTIFY_GRPC_ADDR=":9441" \
   WEBHOOK_URL="${NOTIFY_WEBHOOK_URL:-http://127.0.0.1:9/muxcore-notify-sink}"
 
-start_mod jellyfin jellyfin \
-  "${C[@]}" MUXCORE_MODULE_ID=jellyfin \
-  JELLYFIN_GRPC_ADDR=":9475" JELLYFIN_HTTP_ADDR=":8475" \
-  JELLYFIN_DATA_DIR="$DATA/jellyfin" \
-  JELLYFIN_BASE_URL="${JELLYFIN_BASE_URL:-}" \
-  JELLYFIN_API_KEY="${JELLYFIN_API_KEY:-}" \
-  JELLYFIN_WEBHOOK_SECRET="${JELLYFIN_WEBHOOK_SECRET:-}"
+if [[ -n "${JELLYFIN_BASE_URL:-}" && -n "${JELLYFIN_API_KEY:-}" ]]; then
+  start_mod jellyfin jellyfin \
+    "${C[@]}" MUXCORE_MODULE_ID=jellyfin \
+    JELLYFIN_GRPC_ADDR=":9475" JELLYFIN_HTTP_ADDR=":8475" \
+    JELLYFIN_DATA_DIR="$DATA/jellyfin" \
+    JELLYFIN_BASE_URL="${JELLYFIN_BASE_URL}" \
+    JELLYFIN_API_KEY="${JELLYFIN_API_KEY}" \
+    JELLYFIN_WEBHOOK_SECRET="${JELLYFIN_WEBHOOK_SECRET:-}"
+fi
 
-# Optional consumer SPA (off by default in .env.example).
-if [[ "${MVP_ENABLE_MEDIA_UI:-0}" != "0" ]]; then
+if [[ -n "${PLEX_URL:-}" && -n "${PLEX_TOKEN:-}" ]]; then
+  start_mod plex plex \
+    "${C[@]}" MUXCORE_MODULE_ID=plex \
+    PLEX_GRPC_ADDR=":9476" PLEX_HTTP_ADDR=":8476" \
+    PLEX_URL="$PLEX_URL" PLEX_TOKEN="$PLEX_TOKEN"
+fi
+
+if [[ -n "${EMBY_URL:-}" && -n "${EMBY_TOKEN:-}" ]]; then
+  start_mod emby emby \
+    "${C[@]}" MUXCORE_MODULE_ID=emby \
+    EMBY_GRPC_ADDR=":9477" EMBY_HTTP_ADDR=":8477" \
+    EMBY_URL="$EMBY_URL" EMBY_TOKEN="$EMBY_TOKEN"
+fi
+
+if module_enabled media-dlna; then
+  mkdir -p "$DATA/dlna"
+  start_mod media-dlna media-dlna \
+    "${C[@]}" MUXCORE_MODULE_ID=media-dlna \
+    DLNA_GRPC_ADDR=":9751" \
+    DLNA_HEALTH_HTTP_ADDR=":8751" \
+    DLNA_HTTP_ADDR=":9750" \
+    DLNA_MEDIA_PATH="${DLNA_MEDIA_PATH:-$LIBRARY_ROOT}" \
+    DLNA_FRIENDLY_NAME="${DLNA_FRIENDLY_NAME:-MuxCore DLNA}"
+fi
+
+if module_enabled media-transcoder; then
+  mkdir -p "$DATA/transcoder"
+  start_mod media-transcoder media-transcoder \
+    "${C[@]}" MUXCORE_MODULE_ID=media-transcoder \
+    TRANSCODER_GRPC_ADDR=":9525" \
+    TRANSCODER_HTTP_ADDR="127.0.0.1:9526" \
+    TRANSCODER_DB_PATH="$DATA/transcoder/transcoder.db"
+fi
+
+if [[ "${MVP_ENABLE_MEDIA_UI:-0}" != "0" ]] && module_enabled mediauiprox; then
   UI_DIST="${MEDIA_UI_DIST:-}"
   if [[ -z "$UI_DIST" || ! -d "$UI_DIST" ]]; then
-    echo "WARN: MVP_ENABLE_MEDIA_UI set but MEDIA_UI_DIST missing — skipping media-ui" >&2
+    echo "WARN: MuxCore player selected but MEDIA_UI_DIST is missing — skipping" >&2
   elif have_bin mediauiprox; then
     start_one media-ui env \
       MEDIA_UI_LISTEN="${MEDIA_UI_LISTEN:-:5173}" \
@@ -377,24 +413,17 @@ if [[ "${MVP_ENABLE_MEDIA_UI:-0}" != "0" ]]; then
       TVSHOWS_GRPC_CLIENT_ADDR="127.0.0.1:9440" \
       MOVIES_HTTP_URL="http://127.0.0.1:9430" \
       TVSHOWS_HTTP_URL="http://127.0.0.1:9450" \
-      REQUEST_MEDIA_HTTP_URL="http://127.0.0.1:9380" \
       "$BIN/mediauiprox" \
         -listen "${MEDIA_UI_LISTEN:-:5173}" \
         -dist "$UI_DIST" \
-        -request-http "http://127.0.0.1:9380" \
         -auth-http "${AUTH_HTTP_URL:-http://127.0.0.1:9401}"
   else
-    echo "WARN: mediauiprox missing — skipping media-ui" >&2
+    echo "WARN: mediauiprox missing — skipping MuxCore player" >&2
   fi
 fi
 
-if [[ -f "$ROOT/lib/common.sh" ]]; then
-  # shellcheck disable=SC1091
-  source "$ROOT/lib/common.sh"
-  write_view_me "$ROOT" >/dev/null || true
-fi
+write_view_me "$ROOT" >/dev/null || true
 
 echo "started. logs in $RUN/"
-echo "next: ./bootstrap-auth.sh && ./smoke-fixture.sh"
 echo "URLs: $RUN/VIEW-ME.txt"
 echo "stop:  ./up.sh stop"

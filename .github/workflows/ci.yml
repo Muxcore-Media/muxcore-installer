@@ -19,7 +19,7 @@ jobs:
       - name: shellcheck or bash -n
         run: |
           set -euo pipefail
-          scripts=(install.sh up.sh bootstrap-auth.sh smoke-fixture.sh lib/common.sh)
+          scripts=(get-onboard.sh onboard.sh install.sh up.sh bootstrap-auth.sh smoke-fixture.sh lib/common.sh lib/github.sh lib/ui.sh lib/prereqs.sh lib/paths.sh lib/modules.sh lib/seed-roots.sh lib/compose.sh)
           if command -v shellcheck >/dev/null 2>&1; then
             echo "==> shellcheck ${scripts[*]}"
             shellcheck -x "${scripts[@]}"
@@ -30,3 +30,5 @@ jobs:
               bash -n "$s"
             done
           fi
+          echo "==> non-interactive dry-run"
+          MUXCORE_I_AGREE=1 MUXCORE_NONINTERACTIVE=1 MUXCORE_DRY_RUN=1 bash onboard.sh

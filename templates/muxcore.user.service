@@ -1,0 +1,13 @@
+[Unit]
+Description=MuxCore host stack
+After=network-online.target
+
+[Service]
+Type=forking
+WorkingDirectory=%h/muxcore
+ExecStart=%h/muxcore/up.sh
+ExecStop=%h/muxcore/up.sh stop
+Restart=on-failure
+
+[Install]
+WantedBy=default.target

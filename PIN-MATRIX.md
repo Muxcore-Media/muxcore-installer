@@ -1,7 +1,7 @@
 # Installer pin matrix (module → tag)
 
-Canonical machine-readable pins: [`versions.env`](versions.env).  
-Spool end-user tags (`minimal`, `media`, `acquisition`, `default`, `library-plus`, `secrets-vault`) must use the **same** module versions for overlapping entries.
+Canonical machine-readable pins: [`versions.env`](versions.env).
+Spool tags that overlap must use the same versions.
 
 ## Core
 
@@ -26,9 +26,13 @@ Spool end-user tags (`minimal`, `media`, `acquisition`, `default`, `library-plus
 | `tracing-otlp` | `v0.1.4` |
 | `admin-ui` | `v0.1.10` |
 | `metadata-tmdb` | `v0.1.5` |
+| `metadata-musicbrainz` | `v0.1.0` |
 | `media-movies` | `v0.1.9` |
 | `media-tvshows` | `v0.1.9` |
-| `media-automation` | `v0.1.8` |
+| `media-music` | `v0.1.0` |
+| `media-books` | `v0.1.0` |
+| `media-comics` | `v0.1.0` |
+| `media-audiobooks` | `v0.1.0` |
 | `media-scanner` | `v0.1.9` |
 | `media-custom-formats` | `v0.1.6` |
 | `media-rename` | `v0.2.6` |
@@ -37,33 +41,23 @@ Spool end-user tags (`minimal`, `media`, `acquisition`, `default`, `library-plus
 | `cache-local` | `v0.1.1` |
 | `ratelimit-tokenbucket` | `v0.1.2` |
 | `media-root-folders` | `v0.1.6` |
-| `request-media` | `v0.2.7` |
+| `media-transcoder` | `v0.1.0` |
+| `media-ui` | `v0.1.0` |
 | `notification-default` | `v0.1.6` |
 | `jellyfin` | `v0.2.4` |
+| `plex` | `v0.1.0` |
+| `emby` | `v0.1.0` |
+| `media-dlna` | `v0.1.0` |
 
-## Spool-only (not in installer `MODULES`, still pinned)
-
-| Module | Tag | Spool tag |
-|--------|-----|-----------|
-| `scheduler-cron` | `v0.1.5` | `default` |
-| `cache-redis` | `v0.1.4` | `cache-redis` |
-| `ratelimit-tokenbucket` | `v0.1.2` | `default` |
-| `workflow-tapestry` | `v0.1.5` | `default` |
-| `feature-flags-file` | `v0.1.2` | `default` |
-| `media-list-sync` | `v0.1.7` | `acquisition` |
-| `media-music` / `media-books` / `media-comics` / `media-audiobooks` | `v0.1.0` | `library-plus` |
-| `secrets-vault` | `v0.1.1` | `secrets-vault` |
+The public installer does not pin or start acquisition, indexer, or downloader modules.
 
 ## Atomic update rule
 
 When bumping a pin:
 
-1. Update `versions.env` (installer).
+1. Update `versions.env`.
 2. Update every `spool/tags/*.json` entry for that module to the same tag.
 3. Refresh this document’s tables to match.
-4. Prefer one PR (or same commit batch) for installer + spool so laptop demos never mix floating/`latest` with divergent pins.
-
-Validate locally:
 
 ```bash
 ./scripts/check-pin-matrix.sh
