@@ -335,8 +335,8 @@ func (m *Model) viewWork() string {
 func (m *Model) viewDone() string {
 	a := m.answers
 	body := fmt.Sprintf(
-		"Admin UI:  http://localhost:8082\n  login:   %s / %s\n\nCore health: http://127.0.0.1:8080/health\nCredentials also saved to: %s/run/VIEW-ME.txt",
-		a.AdminUser, a.AdminPass, a.Root,
+		"Admin UI:  http://localhost:8082\n  login:   %s / %s\n\nCore health: http://127.0.0.1:8080/health\nCredentials: %s/run/VIEW-ME.txt\nAdmin token: %s/run/admin.token\n\nSmoke:     ./smoke-fixture.sh\nTip:       cat %s/run/VIEW-ME.txt for URLs, libraries, and commands",
+		a.AdminUser, a.AdminPass, a.Root, a.Root, a.Root,
 	)
 	if a.HasPlayback("MuxCore player") {
 		body = "Player:    http://127.0.0.1:5173\n" + body
