@@ -24,3 +24,14 @@ MuxCore sidecar module (`muxcore-installer`). Workspace deploy and SSH: [`../AGE
 cd muxcore-installer
 go test ./...
 ```
+
+## Homelab vault deploy (umbrella workspace)
+
+This installer is for first-run on a single machine. If you have the full umbrella
+checkout, use `_mvp/scripts/` for vault soak deploy — see [`../AGENTS.md`](../AGENTS.md).
+
+```bash
+_mvp/scripts/deploy-module-to-vault.sh --list
+_mvp/scripts/deploy-module-to-vault.sh <module> --verify-all
+_mvp/scripts/smoke-vault-all.sh
+```

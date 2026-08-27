@@ -111,6 +111,9 @@ Start:  ./up.sh
 Stop:   ./up.sh stop
 Auth:   ./bootstrap-auth.sh
 Smoke:  ./smoke-fixture.sh
+
+Admin API token: run/admin.token (muxcorectl / REST when installed)
+Re-read:         cat run/VIEW-ME.txt
 EOF
   echo "wrote $out"
 }

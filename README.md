@@ -131,6 +131,28 @@ install downloaders, indexers, or request/automation pipelines.
 
 Pins: [`versions.env`](versions.env). Matrix: [`PIN-MATRIX.md`](PIN-MATRIX.md).
 
+## Homelab / umbrella developers
+
+If you maintain the full MuxCore module workspace (Forgejo submodules, vault soak
+stack), use the umbrella repo's [`AGENTS.md`](https://git.zem.systems/muxcore/umbrella/src/branch/main/AGENTS.md)
+instead of this installer for day-to-day deploy:
+
+| Task | Command |
+|------|---------|
+| List deploy targets | `_mvp/scripts/deploy-module-to-vault.sh --list` |
+| Deploy one module to vault | `_mvp/scripts/deploy-module-to-vault.sh <module> --verify-all` |
+| SSH preflight (before deploy) | `_mvp/scripts/preflight-vault-ssh.sh` |
+| Full vault smoke | `_mvp/scripts/smoke-vault-all.sh` |
+| Vault mesh CLI | `_mvp/scripts/muxcorectl-vault.sh health status` |
+| Local / vault HTTP smoke | `_mvp/scripts/smoke-vault-health.sh` |
+| Public edge smoke | `_mvp/scripts/smoke-vault-public.sh` |
+| Local stack status | `cd _mvp && ./run-host.sh status` |
+| Remove stale pidfiles | `cd _mvp && ./run-host.sh cleanup-stale` |
+| Script tests (offline) | `_mvp/scripts/run-script-tests.sh` |
+
+The installer targets **first-run on a single machine**; the umbrella `_mvp/run-host.sh`
+path is the developer soak stack on vault and local Nix workstations.
+
 ## Layout
 
 | Path | Role |
