@@ -79,7 +79,7 @@ write_view_me() {
   local out="${2:-$root/run/VIEW-ME.txt}"
   mkdir -p "$(dirname "$out")"
   local user="${MVP_ADMIN_USER:-admin}"
-  local pass="${MVP_ADMIN_PASSWORD:-admin-dev-only}"
+  local pass="${MVP_ADMIN_PASSWORD:-}"
   local player=""
   if [[ "${MVP_ENABLE_MEDIA_UI:-0}" != "0" ]]; then
     player="  Player:       http://127.0.0.1:5173"

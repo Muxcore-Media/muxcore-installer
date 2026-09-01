@@ -64,9 +64,12 @@ func runNonInteractive() int {
 	if v := os.Getenv("MVP_ADMIN_USER"); v != "" {
 		a.AdminUser = v
 	}
-	a.AdminPass = os.Getenv("MVP_ADMIN_PASSWORD")
-	if a.AdminPass == "" {
-		a.AdminPass = "admin-dev-only"
+	if v := os.Getenv("MVP_ADMIN_PASSWORD"); v != "" {
+		a.AdminPass = v
+	}
+	if err := a.EnsureAdminPassword(); err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		return 1
 	}
 	if os.Getenv("TMDB_API_KEY") != "" {
 		a.TMDBFixture = false

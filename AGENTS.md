@@ -1,37 +1,44 @@
 # AGENTS.md — muxcore-installer
 
-MuxCore sidecar module (`muxcore-installer`). Workspace deploy and SSH: [`../AGENTS.md`](../AGENTS.md). Default ports: [`_mvp/PORTS.md`](../_mvp/PORTS.md).
+MuxCore **household first-run installer** — a self-contained Go binary (`muxcore-setup`) with a Bubbletea TUI wizard and a non-interactive env-driven pipeline. It is **not** a gRPC sidecar module.
 
-## Module identity
+Workspace deploy and SSH (vault soak stack): [`../AGENTS.md`](../AGENTS.md).
 
-| Field | Value |
-|-------|-------|
-| Directory | `muxcore-installer` |
-| Capabilities | see muxcore.json |
-| Contracts | none declared |
+## What this repo is
 
-## Agent rules
+| Artifact | Role |
+|----------|------|
+| `cmd/muxcore-setup/` | Entry — interactive TUI + `MUXCORE_NONINTERACTIVE=1` pipeline |
+| `get-onboard.sh` | One-liner bootstrap — downloads pinned `muxcore-setup` from Forgejo (GitHub mirror fallback) |
+| `internal/wizard/` | `Answers` + `Pipeline` (configure → fetch → seed → start → health → admin → smoke) |
+| `internal/assets/` | Embedded `up.sh`, `bootstrap-auth.sh`, `.env.example`, policies |
+| `versions.env` | Module pin matrix (embedded at build time) |
 
-- Modules run as gRPC sidecars; capabilities are the security boundary.
-- TLS required in production (`MUXCORE_INSECURE_DISABLE_TLS` is dev-only).
-- Match existing Go patterns; run `gofmt` and package tests before finishing.
-- Cross-module events: prefer `github.com/Muxcore-Media/contracts-media/events` over deprecated `core/pkg/contracts` aliases.
-- Do not edit polluted workspace dumps (see `MASTER-ROADMAP.md` Appendix H).
+Release origin: **Forgejo** (`git.zem.systems/muxcore`). GitHub Releases is an optional public mirror.
 
-## Build
+## Build & test
 
 ```bash
 cd muxcore-installer
 go test ./...
+go vet ./...
+gofmt -l .
+
+# Non-interactive dry-run (CI gate)
+go build -o muxcore-setup ./cmd/muxcore-setup
+MUXCORE_I_AGREE=1 MUXCORE_NONINTERACTIVE=1 MUXCORE_DRY_RUN=1 ./muxcore-setup
 ```
 
-## Homelab vault deploy (umbrella workspace)
+Origin CI: `.forgejo/workflows/ci.yml` on label `native`. `.github/workflows/ci.yml` is optional public-consumer CI, not the origin gate.
 
-This installer is for first-run on a single machine. If you have the full umbrella
-checkout, use `_mvp/scripts/` for vault soak deploy — see [`../AGENTS.md`](../AGENTS.md).
+## Agent rules
 
-```bash
-_mvp/scripts/deploy-module-to-vault.sh --list
-_mvp/scripts/deploy-module-to-vault.sh <module> --verify-all
-_mvp/scripts/smoke-vault-all.sh
-```
+- Household installer targets **single-machine first-run**, not the vault `_mvp/run-host.sh` soak stack.
+- Module binaries and `media-ui-app` dist fetch from Forgejo releases first; verify every tarball against release `SHA256SUMS`.
+- Never default `MVP_ADMIN_PASSWORD` to `admin-dev-only` — generate 16 chars or require explicit env.
+- `restart-only` must load existing `.env` and must not clobber library paths, playback, or admin creds.
+- Pins: `versions.env` / `PIN-MATRIX.md`. Do not edit polluted workspace dumps (`MASTER-ROADMAP.md` Appendix H).
+
+## Homelab developers
+
+For vault soak deploy of individual modules, use umbrella `_mvp/scripts/` — see [`../AGENTS.md`](../AGENTS.md).

@@ -1,27 +1,15 @@
 package tui
 
 import (
-	"crypto/rand"
-
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/Muxcore-Media/muxcore-installer/internal/password"
 )
-
-const genPasswordChars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"
-
-func genPassword(n int) string {
-	b := make([]byte, n)
-	rand.Read(b)
-	out := make([]byte, n)
-	for i, v := range b {
-		out[i] = genPasswordChars[int(v)%len(genPasswordChars)]
-	}
-	return string(out)
-}
 
 func (m *Model) initAdmin() {
 	m.adminUser = newTextInput("admin", m.answers.AdminUser, false)
-	pass := genPassword(16)
+	pass := password.Generate(16)
 	m.adminPass = newTextInput("", pass, true)
 	m.answers.AdminPass = pass
 	m.adminGen = true
@@ -59,7 +47,7 @@ func (m *Model) updateAdmin(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case "ctrl+g":
 		if m.adminFocus == 1 {
-			m.adminPass.SetValue(genPassword(16))
+			m.adminPass.SetValue(password.Generate(16))
 			m.adminGen = true
 			return m, nil
 		}
@@ -71,7 +59,7 @@ func (m *Model) updateAdmin(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.answers.AdminUser = user
 		m.answers.AdminPass = m.adminPass.Value()
 		if m.answers.AdminPass == "" {
-			m.answers.AdminPass = genPassword(16)
+			m.answers.AdminPass = password.Generate(16)
 		}
 		m.initMetadata()
 		return m, nil

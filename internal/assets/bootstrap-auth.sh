@@ -10,7 +10,11 @@ BIN="$ROOT/bin"
 [[ -f "$ROOT/.env" ]] && source "$ROOT/.env" || true
 
 USER="${MVP_ADMIN_USER:-admin}"
-PASS="${MVP_ADMIN_PASSWORD:-admin-dev-only}"
+PASS="${MVP_ADMIN_PASSWORD:-}"
+if [[ -z "$PASS" ]]; then
+  echo "FAIL: MVP_ADMIN_PASSWORD is required (run muxcore-setup or set in .env)" >&2
+  exit 1
+fi
 AUTH_ADDR="${AUTH_GRPC_ADDR:-127.0.0.1:9403}"
 TOKEN_FILE="${MVP_TOKEN_FILE:-$ROOT/run/admin.token}"
 [[ "$TOKEN_FILE" != /* ]] && TOKEN_FILE="$ROOT/${TOKEN_FILE#./}"
