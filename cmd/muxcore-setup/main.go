@@ -95,6 +95,24 @@ Env vars (non-interactive mode):
   MUXCORE_INSTALL_DIR        install root (default: current directory)
   MUXCORE_LIBRARIES          CSV: Movies,TV,Music,Books,Comics,Audiobooks
   MUXCORE_PLAYBACK           CSV: MuxCore player,Jellyfin,Plex,Emby,DLNA
+  INSTALL_RUNTIME            host | compose
+  MUXCORE_KEEP_MODE          once | user | system | compose
+  MUXCORE_BIND_ALL=1         listen on all interfaces (default: localhost only)
   MUXCORE_PROFILE            sqlite | postgres
-  MVP_ADMIN_USER / MVP_ADMIN_PASSWORD`)
+  DATABASE_URL               Postgres connection string (when profile=postgres)
+  MVP_LIBRARY_ROOT           movie library path
+  MVP_TV_LIBRARY_ROOT        TV library path
+  MVP_MUSIC_LIBRARY_ROOT     music library path
+  MVP_BOOKS_LIBRARY_ROOT     books library path
+  MVP_COMICS_LIBRARY_ROOT    comics library path
+  MVP_AUDIOBOOKS_LIBRARY_ROOT audiobooks library path
+  MVP_IMPORT_DIR             watch/import folder
+  MVP_ADMIN_USER             admin username (default: admin)
+  MVP_ADMIN_PASSWORD         admin password (generated when unset)
+  TMDB_API_KEY               live TMDB metadata (omit for offline fixture)
+  MUXCORE_METADATA_LANGUAGE  e.g. en-US
+  JELLYFIN_BASE_URL / JELLYFIN_API_KEY
+  PLEX_URL / PLEX_TOKEN
+  EMBY_URL / EMBY_TOKEN
+  MUXCORE_REGISTRY           OCI image prefix for compose runtime`)
 }

@@ -35,38 +35,52 @@ func Bin() ([]string, error) {
 	return nil, fmt.Errorf("docker compose or podman compose is required for the Compose runtime")
 }
 
+// RegistryPrefix returns the OCI image prefix (Forgejo/LAN registry).
+func RegistryPrefix() string {
+	if v := os.Getenv("MUXCORE_REGISTRY"); v != "" {
+		return strings.TrimRight(v, "/")
+	}
+	return "git.zem.systems/muxcore"
+}
+
 func image(name string) string {
 	p := pins.Load()
 	tag := p.ModuleTag(name)
+	prefix := RegistryPrefix()
 	switch name {
 	case "muxcored":
-		return fmt.Sprintf("ghcr.io/muxcore-media/muxcored:%s", tag)
+		return fmt.Sprintf("%s/muxcored:%s", prefix, tag)
 	case "mediauiprox":
-		return fmt.Sprintf("ghcr.io/muxcore-media/media-ui:%s", tag)
+		return fmt.Sprintf("%s/media-ui:%s", prefix, p.ModuleTag("media-ui"))
 	default:
-		return fmt.Sprintf("ghcr.io/muxcore-media/%s:%s", name, tag)
+		return fmt.Sprintf("%s/%s:%s", prefix, name, tag)
 	}
 }
 
 // Env is the subset of wizard answers the compose file needs.
 type Env struct {
-	Root            string
-	EnabledModules  []string
-	DatabaseURL     string
-	TMDBAPIKey      string
-	TMDBFixture     string
-	MusicBrainzFix  string
-	JellyfinURL     string
-	JellyfinAPIKey  string
-	PlexURL         string
-	PlexToken       string
-	EmbyURL         string
-	EmbyToken       string
-	DLNAMediaPath   string
-	MusicLibraryDir string
-	LibraryRoot     string
-	TVLibraryRoot   string
-	ImportDir       string
+	Root                  string
+	EnabledModules        []string
+	EnableMediaUI         bool
+	MediaUIDist           string
+	DatabaseURL           string
+	TMDBAPIKey            string
+	TMDBFixture           string
+	MusicBrainzFix        string
+	JellyfinURL           string
+	JellyfinAPIKey        string
+	PlexURL               string
+	PlexToken             string
+	EmbyURL               string
+	EmbyToken             string
+	DLNAMediaPath         string
+	MusicLibraryDir       string
+	LibraryRoot           string
+	TVLibraryRoot         string
+	BooksLibraryRoot      string
+	ComicsLibraryRoot     string
+	AudiobooksLibraryRoot string
+	ImportDir             string
 }
 
 func enabled(env Env, name string) bool {
@@ -79,10 +93,10 @@ func enabled(env Env, name string) bool {
 }
 
 type svc struct {
-	name  string
-	ports []string
-	env   []string
-	extra []string
+	name    string
+	ports   []string
+	env     []string
+	volumes []string
 }
 
 func writeSvc(b *strings.Builder, root string, s svc) {
@@ -98,6 +112,9 @@ func writeSvc(b *strings.Builder, root string, s svc) {
 	}
 	b.WriteString("    volumes:\n")
 	fmt.Fprintf(b, "      - %s/data:/data\n", root)
+	for _, v := range s.volumes {
+		fmt.Fprintf(b, "      - %s\n", v)
+	}
 	if s.name == "call-policy-default" || s.name == "publish-policy-default" {
 		fmt.Fprintf(b, "      - %s/policies:/app/policies:ro\n", root)
 	}
@@ -109,6 +126,30 @@ func writeSvc(b *strings.Builder, root string, s svc) {
 	}
 	b.WriteString("    depends_on:\n      core:\n        condition: service_healthy\n")
 	b.WriteString("    restart: unless-stopped\n")
+}
+
+func mountHostPath(hostPath, containerPath string) string {
+	if hostPath == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s:%s", hostPath, containerPath)
+}
+
+func libraryMounts(env Env) []string {
+	var out []string
+	add := func(host, container string) {
+		if m := mountHostPath(host, container); m != "" {
+			out = append(out, m)
+		}
+	}
+	add(env.LibraryRoot, "/data/library")
+	add(env.TVLibraryRoot, "/data/library/tv")
+	add(env.MusicLibraryDir, "/data/library/music")
+	add(env.BooksLibraryRoot, "/data/library/books")
+	add(env.ComicsLibraryRoot, "/data/library/comics")
+	add(env.AudiobooksLibraryRoot, "/data/library/audiobooks")
+	add(env.ImportDir, "/data/import")
+	return out
 }
 
 // Write renders docker-compose.yml for every enabled, non-core module plus
@@ -129,6 +170,9 @@ func Write(env Env) (string, error) {
 `)
 	fmt.Fprintf(&b, "      - %s/data:/app/data\n", env.Root)
 	fmt.Fprintf(&b, "      - %s/muxcore.json:/app/muxcore.json:ro\n", env.Root)
+	for _, m := range libraryMounts(env) {
+		fmt.Fprintf(&b, "      - %s\n", m)
+	}
 	b.WriteString(`    restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://127.0.0.1:8080/health || exit 1"]
@@ -137,51 +181,77 @@ func Write(env Env) (string, error) {
       retries: 20
 `)
 
-	def := func(name string, ports []string, kv ...string) {
+	libVol := libraryMounts(env)
+
+	def := func(name string, ports []string, extraVol []string, kv ...string) {
 		if enabled(env, name) {
-			writeSvc(&b, env.Root, svc{name: name, ports: ports, env: kv})
+			vols := append([]string{}, libVol...)
+			vols = append(vols, extraVol...)
+			writeSvc(&b, env.Root, svc{name: name, ports: ports, env: kv, volumes: vols})
 		}
 	}
 
-	def("api-rest", []string{"18080:8080"}, `API_REST_HTTP_ADDR: ":8080"`, `API_REST_GRPC_ADDR: ":9400"`)
-	def("auth-local", []string{"9401:9401", "9403:9403"},
+	def("api-rest", []string{"18080:8080"}, nil, `API_REST_HTTP_ADDR: ":8080"`, `API_REST_GRPC_ADDR: ":9400"`)
+	def("auth-local", []string{"9401:9401", "9403:9403"}, nil,
 		`AUTH_DB_PATH: /data/auth/auth.db`, `AUTH_GRPC_ADDR: ":9403"`, `AUTH_HTTP_ADDR: ":9401"`)
-	def("database-sqlite", nil, `SQLITE_DB_PATH: /data/sqlite/muxcore.db`)
-	def("database-postgres", nil, fmt.Sprintf("DATABASE_URL: %s", env.DatabaseURL))
-	def("secrets-file", nil, `SECRETS_STORE: /data/secrets/store.json`, `SECRETS_KEY_FILE: /data/secrets/master.key`)
-	def("encryption-aesgcm", nil, `ENCRYPTION_KEY_FILE: /data/encryption/master.key`)
-	def("call-policy-default", nil, `CALL_POLICY_FILE: /app/policies/call-policy.yaml`)
-	def("publish-policy-default", nil, `PUBLISH_POLICY_FILE: /app/policies/publish-policy.yaml`)
-	def("cache-local", nil, `CACHE_LOCAL_GRPC_ADDR: ":9600"`)
-	def("ratelimit-tokenbucket", nil, `RATELIMIT_ENABLED: "false"`)
-	def("health-monitor", []string{"9203:9203"}, `HEALTH_MONITOR_GRPC_ADDR: ":9202"`, `HEALTH_MONITOR_HTTP_ADDR: ":9203"`)
-	def("admin-ui", []string{"8082:8082"}, `ADMIN_UI_ADDR: ":8082"`, `ADMIN_UI_CORE_ADDR: core:9090`,
+	def("database-sqlite", nil, nil, `SQLITE_DB_PATH: /data/sqlite/muxcore.db`)
+	def("database-postgres", nil, nil, fmt.Sprintf("DATABASE_URL: %s", env.DatabaseURL))
+	def("secrets-file", nil, nil, `SECRETS_STORE: /data/secrets/store.json`, `SECRETS_KEY_FILE: /data/secrets/master.key`)
+	def("encryption-aesgcm", nil, nil, `ENCRYPTION_KEY_FILE: /data/encryption/master.key`)
+	def("call-policy-default", nil, nil, `CALL_POLICY_FILE: /app/policies/call-policy.yaml`)
+	def("publish-policy-default", nil, nil, `PUBLISH_POLICY_FILE: /app/policies/publish-policy.yaml`)
+	def("cache-local", nil, nil, `CACHE_LOCAL_GRPC_ADDR: ":9600"`)
+	def("ratelimit-tokenbucket", nil, nil, `RATELIMIT_ENABLED: "false"`)
+	def("health-monitor", []string{"9203:9203"}, nil, `HEALTH_MONITOR_GRPC_ADDR: ":9202"`, `HEALTH_MONITOR_HTTP_ADDR: ":9203"`)
+	def("admin-ui", []string{"8082:8082"}, nil, `ADMIN_UI_ADDR: ":8082"`, `ADMIN_UI_CORE_ADDR: core:9090`,
 		`ADMIN_UI_INSECURE: "true"`, `ADMIN_UI_AUTH_ADDR: http://auth-local:9401`)
-	def("notification-default", nil, `NOTIFY_GRPC_ADDR: ":9441"`)
-	def("metadata-tmdb", nil, fmt.Sprintf("TMDB_API_KEY: %s", env.TMDBAPIKey), fmt.Sprintf("TMDB_FIXTURE: %s", env.TMDBFixture))
-	def("metadata-musicbrainz", nil, fmt.Sprintf("MUSICBRAINZ_FIXTURE: %s", env.MusicBrainzFix))
-	def("media-movies", []string{"9430:9430"}, `MOVIES_DB_PATH: /data/movies/movies.db`, `MOVIES_IMAGE_DIR: /data/movies/images`, `MOVIES_HTTP_ADDR: ":9430"`)
-	def("media-tvshows", nil, `TVSHOWS_DB_PATH: /data/tvshows/tvshows.db`, `TVSHOWS_IMAGE_DIR: /data/tvshows/images`, `TVSHOWS_GRPC_ADDR: ":9440"`, `TVSHOWS_HTTP_ADDR: ":9450"`)
-	def("media-music", nil, `MUSIC_DATA_DIR: /data/music`, fmt.Sprintf("MUSIC_LIBRARY_DIR: %s", orDefault(env.MusicLibraryDir, "/data/library/music")))
-	def("media-books", nil, `BOOKS_DATA_DIR: /data/books`)
-	def("media-comics", nil, `COMICS_DATA_DIR: /data/comics`)
-	def("media-audiobooks", nil, `AUDIOBOOKS_DATA_DIR: /data/audiobooks`)
-	def("media-scanner", nil,
+	def("notification-default", nil, nil, `NOTIFY_GRPC_ADDR: ":9441"`)
+	def("metadata-tmdb", nil, nil, fmt.Sprintf("TMDB_API_KEY: %s", env.TMDBAPIKey), fmt.Sprintf("TMDB_FIXTURE: %s", env.TMDBFixture))
+	def("metadata-musicbrainz", nil, nil, fmt.Sprintf("MUSICBRAINZ_FIXTURE: %s", env.MusicBrainzFix))
+	def("media-movies", []string{"9430:9430"}, nil, `MOVIES_DB_PATH: /data/movies/movies.db`, `MOVIES_IMAGE_DIR: /data/movies/images`, `MOVIES_HTTP_ADDR: ":9430"`)
+	def("media-tvshows", nil, nil, `TVSHOWS_DB_PATH: /data/tvshows/tvshows.db`, `TVSHOWS_IMAGE_DIR: /data/tvshows/images`, `TVSHOWS_GRPC_ADDR: ":9440"`, `TVSHOWS_HTTP_ADDR: ":9450"`)
+	def("media-music", nil, nil, `MUSIC_DATA_DIR: /data/music`, fmt.Sprintf("MUSIC_LIBRARY_DIR: %s", orDefault(env.MusicLibraryDir, "/data/library/music")))
+	def("media-books", nil, nil, `BOOKS_DATA_DIR: /data/books`)
+	def("media-comics", nil, nil, `COMICS_DATA_DIR: /data/comics`)
+	def("media-audiobooks", nil, nil, `AUDIOBOOKS_DATA_DIR: /data/audiobooks`)
+	def("media-scanner", nil, nil,
 		`SCANNER_DB_PATH: /data/scanner/scanner.db`,
 		fmt.Sprintf("SCANNER_LIBRARY_ROOT: %s", orDefault(env.LibraryRoot, "/data/library")),
 		fmt.Sprintf("SCANNER_TV_LIBRARY_ROOT: %s", orDefault(env.TVLibraryRoot, "/data/library/tv")),
 		fmt.Sprintf("SCANNER_DEFAULT_WATCH_DIR: %s", orDefault(env.ImportDir, "/data/import")),
 		`SCANNER_IMPORT_MODE: copy`)
-	def("media-root-folders", nil, `ROOTS_DB_PATH: /data/roots/roots.db`)
-	def("media-rename", nil, `RENAME_DB_PATH: /data/rename/rename.db`)
-	def("media-ffprobe", nil, `FFPROBE_DB_PATH: /data/ffprobe/cache.db`)
-	def("media-subtitles", nil, `SUBS_DB_PATH: /data/subtitles/subtitles.db`, `SUBS_DIR: /data/subtitles/files`)
-	def("media-custom-formats", nil, `FORMATS_DB_PATH: /data/formats/formats.db`, `FORMATS_SEED_DEFAULTS: "true"`)
-	def("media-transcoder", nil, `TRANSCODER_GRPC_ADDR: ":9525"`, `TRANSCODER_HTTP_ADDR: ":9526"`)
-	def("jellyfin", nil, fmt.Sprintf("JELLYFIN_BASE_URL: %s", env.JellyfinURL), fmt.Sprintf("JELLYFIN_API_KEY: %s", env.JellyfinAPIKey))
-	def("plex", nil, fmt.Sprintf("PLEX_URL: %s", env.PlexURL), fmt.Sprintf("PLEX_TOKEN: %s", env.PlexToken))
-	def("emby", nil, fmt.Sprintf("EMBY_URL: %s", env.EmbyURL), fmt.Sprintf("EMBY_TOKEN: %s", env.EmbyToken))
-	def("media-dlna", nil, fmt.Sprintf("DLNA_MEDIA_PATH: %s", orDefault(env.DLNAMediaPath, orDefault(env.LibraryRoot, "/data/library"))))
+	def("media-root-folders", nil, nil, `ROOTS_DB_PATH: /data/roots/roots.db`)
+	def("media-rename", nil, nil, `RENAME_DB_PATH: /data/rename/rename.db`)
+	def("media-ffprobe", nil, nil, `FFPROBE_DB_PATH: /data/ffprobe/cache.db`)
+	def("media-subtitles", nil, nil, `SUBS_DB_PATH: /data/subtitles/subtitles.db`, `SUBS_DIR: /data/subtitles/files`)
+	def("media-custom-formats", nil, nil, `FORMATS_DB_PATH: /data/formats/formats.db`, `FORMATS_SEED_DEFAULTS: "true"`)
+	def("media-transcoder", nil, nil, `TRANSCODER_GRPC_ADDR: ":9525"`, `TRANSCODER_HTTP_ADDR: ":9526"`)
+	def("jellyfin", nil, nil, fmt.Sprintf("JELLYFIN_BASE_URL: %s", env.JellyfinURL), fmt.Sprintf("JELLYFIN_API_KEY: %s", env.JellyfinAPIKey))
+	def("plex", nil, nil, fmt.Sprintf("PLEX_URL: %s", env.PlexURL), fmt.Sprintf("PLEX_TOKEN: %s", env.PlexToken))
+	def("emby", nil, nil, fmt.Sprintf("EMBY_URL: %s", env.EmbyURL), fmt.Sprintf("EMBY_TOKEN: %s", env.EmbyToken))
+	def("media-dlna", nil, nil, fmt.Sprintf("DLNA_MEDIA_PATH: %s", orDefault(env.DLNAMediaPath, orDefault(env.LibraryRoot, "/data/library"))))
+
+	if env.EnableMediaUI {
+		dist := env.MediaUIDist
+		if dist == "" {
+			dist = filepath.Join(env.Root, "dist-app")
+		}
+		var mediaVol []string
+		if m := mountHostPath(dist, "/dist-app"); m != "" {
+			mediaVol = append(mediaVol, m)
+		}
+		writeSvc(&b, env.Root, svc{
+			name:  "mediauiprox",
+			ports: []string{"5173:5173"},
+			env: []string{
+				`MEDIA_UI_LISTEN: ":5173"`,
+				`MEDIA_UI_DIST: /dist-app`,
+				`MEDIA_UI_REQUIRE_AUTH: "1"`,
+				`AUTH_HTTP_URL: http://auth-local:9401`,
+			},
+			volumes: append(libVol, mediaVol...),
+		})
+	}
 
 	out := filepath.Join(env.Root, "docker-compose.yml")
 	if err := os.WriteFile(out, []byte(b.String()), 0o644); err != nil {

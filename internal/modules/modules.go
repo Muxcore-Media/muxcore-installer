@@ -116,6 +116,8 @@ func RepoForBin(name string) string {
 		return "core"
 	case "mediauiprox":
 		return "media-ui"
+	case "dist-app":
+		return "media-ui-app"
 	default:
 		return name
 	}

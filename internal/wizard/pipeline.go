@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/Muxcore-Media/muxcore-installer/internal/assets"
@@ -88,9 +89,27 @@ func (p *Pipeline) emit(step StepID, kind StepKind, text string) {
 // Run executes every step in order, stopping at the first hard failure.
 func (p *Pipeline) Run(ctx context.Context) error {
 	a := p.Answers
+
+	if a.ExistingChoice == "restart-only" {
+		loaded, err := LoadFromEnvFile(a.Root)
+		if err != nil {
+			return fmt.Errorf("load existing .env: %w", err)
+		}
+		// Preserve wizard-only fields (legal consent, existing choice).
+		loaded.Agreed = a.Agreed
+		loaded.ExistingChoice = a.ExistingChoice
+		loaded.ExistingFound = a.ExistingFound
+		p.Answers = loaded
+		a = p.Answers
+	}
+
 	a.EnabledModules = modules.Resolve(modules.Answers{
 		Libraries: a.Libraries, Playback: a.Playback, Profile: a.Profile,
 	})
+
+	if err := a.EnsureAdminPassword(); err != nil {
+		return err
+	}
 
 	if err := p.stepConfigure(); err != nil {
 		return err
@@ -102,8 +121,12 @@ func (p *Pipeline) Run(ctx context.Context) error {
 	if err := p.stepFetch(ctx); err != nil {
 		return err
 	}
-	if err := p.stepSeed(); err != nil {
-		return err
+	if a.ExistingChoice != "restart-only" {
+		if err := p.stepSeed(); err != nil {
+			return err
+		}
+	} else {
+		p.emit(StepSeed, KindDone, "skipped — restart-only")
 	}
 	if err := p.stepStart(ctx); err != nil {
 		return err
@@ -112,10 +135,12 @@ func (p *Pipeline) Run(ctx context.Context) error {
 		return err
 	}
 	if err := p.stepAdmin(ctx); err != nil {
-		p.emit(StepAdmin, KindWarn, "admin bootstrap failed (auth may still be starting): "+err.Error())
+		p.emit(StepAdmin, KindError, err.Error())
+		return err
 	}
 	if err := p.stepSmoke(ctx); err != nil {
-		p.emit(StepSmoke, KindWarn, "health check reported problems: "+err.Error())
+		p.emit(StepSmoke, KindError, err.Error())
+		return err
 	}
 	return nil
 }
@@ -130,8 +155,28 @@ func (p *Pipeline) stepConfigure() error {
 	if err := assets.ExtractInto(root); err != nil {
 		return err
 	}
+
+	restartOnly := a.ExistingChoice == "restart-only"
 	envPath := filepath.Join(root, ".env")
 	examplePath := filepath.Join(root, ".env.example")
+
+	if restartOnly {
+		if _, err := os.Stat(envPath); os.IsNotExist(err) {
+			return fmt.Errorf("restart-only requires existing .env at %s", envPath)
+		}
+		p.emit(StepConfigure, KindLine, "preserving existing .env (restart-only)")
+		if err := p.writeViewMe(root); err != nil {
+			p.emit(StepConfigure, KindWarn, "VIEW-ME.txt: "+err.Error())
+		}
+		if a.Runtime == "compose" {
+			if err := p.writeCompose(root); err != nil {
+				p.emit(StepConfigure, KindWarn, "compose file: "+err.Error())
+			}
+		}
+		p.emit(StepConfigure, KindDone, "")
+		return nil
+	}
+
 	if _, err := os.Stat(envPath); os.IsNotExist(err) {
 		if data, err := os.ReadFile(examplePath); err == nil {
 			os.WriteFile(envPath, data, 0o600)
@@ -142,6 +187,24 @@ func (p *Pipeline) stepConfigure() error {
 		return err
 	}
 
+	kv := p.envKV(a)
+	f.SetAll(kv)
+	if err := f.Save(); err != nil {
+		return err
+	}
+	if err := p.writeViewMe(root); err != nil {
+		p.emit(StepConfigure, KindWarn, "VIEW-ME.txt: "+err.Error())
+	}
+	if a.Runtime == "compose" {
+		if err := p.writeCompose(root); err != nil {
+			p.emit(StepConfigure, KindWarn, "compose file: "+err.Error())
+		}
+	}
+	p.emit(StepConfigure, KindDone, "")
+	return nil
+}
+
+func (p *Pipeline) envKV(a *Answers) map[string]string {
 	kv := map[string]string{
 		"INSTALL_RUNTIME":              a.Runtime,
 		"MUXCORE_PROFILE":              a.Profile,
@@ -156,6 +219,7 @@ func (p *Pipeline) stepConfigure() error {
 	}
 	if a.HasPlayback("MuxCore player") {
 		kv["MVP_ENABLE_MEDIA_UI"] = "1"
+		kv["MEDIA_UI_DIST"] = filepath.Join(a.Root, "dist-app")
 	}
 	if p := a.LibraryPaths["movies"]; p != "" {
 		kv["MVP_LIBRARY_ROOT"] = p
@@ -214,45 +278,64 @@ func (p *Pipeline) stepConfigure() error {
 	if a.HWAccelEnabled {
 		kv["TRANSCODER_HWACCEL"] = a.HWAccelKind
 	}
-	f.SetAll(kv)
-	if err := f.Save(); err != nil {
+	return kv
+}
+
+func (p *Pipeline) writeCompose(root string) error {
+	a := p.Answers
+	kv := p.envKV(a)
+	_, err := compose.Write(compose.Env{
+		Root:                  root,
+		EnabledModules:        a.EnabledModules,
+		EnableMediaUI:         a.HasPlayback("MuxCore player"),
+		MediaUIDist:           kv["MEDIA_UI_DIST"],
+		DatabaseURL:           a.DatabaseURL,
+		TMDBAPIKey:            a.TMDBAPIKey,
+		TMDBFixture:           kv["TMDB_FIXTURE"],
+		MusicBrainzFix:        kv["MUSICBRAINZ_FIXTURE"],
+		JellyfinURL:           a.Jellyfin.URL,
+		JellyfinAPIKey:        a.Jellyfin.Token,
+		PlexURL:               a.Plex.URL,
+		PlexToken:             a.Plex.Token,
+		EmbyURL:               a.Emby.URL,
+		EmbyToken:             a.Emby.Token,
+		DLNAMediaPath:         a.LibraryPaths["movies"],
+		MusicLibraryDir:       a.LibraryPaths["music"],
+		LibraryRoot:           a.LibraryPaths["movies"],
+		TVLibraryRoot:         a.LibraryPaths["tv"],
+		BooksLibraryRoot:      a.LibraryPaths["books"],
+		ComicsLibraryRoot:     a.LibraryPaths["comics"],
+		AudiobooksLibraryRoot: a.LibraryPaths["audiobooks"],
+		ImportDir:             a.ImportDir,
+	})
+	return err
+}
+
+func (p *Pipeline) writeViewMe(root string) error {
+	a := p.Answers
+	out := filepath.Join(root, "run", "VIEW-ME.txt")
+	if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
 		return err
 	}
-
-	if a.Runtime == "compose" {
-		_, err := compose.Write(compose.Env{
-			Root:            root,
-			EnabledModules:  a.EnabledModules,
-			DatabaseURL:     a.DatabaseURL,
-			TMDBAPIKey:      a.TMDBAPIKey,
-			TMDBFixture:     kv["TMDB_FIXTURE"],
-			MusicBrainzFix:  kv["MUSICBRAINZ_FIXTURE"],
-			JellyfinURL:     a.Jellyfin.URL,
-			JellyfinAPIKey:  a.Jellyfin.Token,
-			PlexURL:         a.Plex.URL,
-			PlexToken:       a.Plex.Token,
-			EmbyURL:         a.Emby.URL,
-			EmbyToken:       a.Emby.Token,
-			MusicLibraryDir: a.LibraryPaths["music"],
-			LibraryRoot:     a.LibraryPaths["movies"],
-			TVLibraryRoot:   a.LibraryPaths["tv"],
-			ImportDir:       a.ImportDir,
-		})
-		if err != nil {
-			p.emit(StepConfigure, KindWarn, "compose file: "+err.Error())
-		}
+	var b strings.Builder
+	b.WriteString("MuxCore — you're ready\n\n")
+	b.WriteString(fmt.Sprintf("  Admin UI:     http://localhost:8082\n                login: %s / %s\n", a.AdminUser, a.AdminPass))
+	if a.HasPlayback("MuxCore player") {
+		b.WriteString("  Player:       http://127.0.0.1:5173\n")
 	}
-	p.emit(StepConfigure, KindDone, "")
-	return nil
+	b.WriteString("\n  Core health:  http://127.0.0.1:8080/health\n")
+	b.WriteString("\nStart:  ./up.sh\nStop:   ./up.sh stop\n")
+	return os.WriteFile(out, []byte(b.String()), 0o600)
 }
 
 func (p *Pipeline) stepFetch(ctx context.Context) error {
 	a := p.Answers
 	p.emit(StepFetch, KindStart, "")
-	res, err := fetch.Run(fetch.Options{
-		Root:       a.Root,
-		Modules:    a.EnabledModules,
-		LabBinDirs: fetch.LabBinDirs(a.Root),
+	_, err := fetch.Run(fetch.Options{
+		Root:            a.Root,
+		Modules:         a.EnabledModules,
+		LabBinDirs:      fetch.LabBinDirs(a.Root),
+		FetchMediaUIApp: a.HasPlayback("MuxCore player"),
 		OnEvent: func(e fetch.Event) {
 			switch e.Kind {
 			case fetch.EventStart:
@@ -265,18 +348,15 @@ func (p *Pipeline) stepFetch(ctx context.Context) error {
 			case fetch.EventSkipped:
 				p.emit(StepFetch, KindLine, fmt.Sprintf("  %s already present", e.Module))
 			case fetch.EventDone:
-				p.emit(StepFetch, KindLine, fmt.Sprintf("  installed bin/%s", e.Module))
+				p.emit(StepFetch, KindLine, fmt.Sprintf("  installed %s", e.Module))
 			case fetch.EventMissing:
-				p.emit(StepFetch, KindWarn, fmt.Sprintf("  MISSING %s: %s", e.Module, e.Detail))
+				p.emit(StepFetch, KindError, fmt.Sprintf("MISSING %s: %s", e.Module, e.Detail))
 			}
 		},
 	})
 	if err != nil {
 		p.emit(StepFetch, KindError, err.Error())
 		return err
-	}
-	if len(res.Missing) > 0 {
-		p.emit(StepFetch, KindWarn, fmt.Sprintf("missing binaries: %v (place in bin/ or set MUXCORE_LAB_BIN)", res.Missing))
 	}
 	p.emit(StepFetch, KindDone, "")
 	return nil
@@ -373,14 +453,15 @@ func (p *Pipeline) stepHealth(ctx context.Context) error {
 	for {
 		resp, err := client.Get("http://127.0.0.1:8080/health")
 		if err == nil {
+			code := resp.StatusCode
 			resp.Body.Close()
-			if resp.StatusCode == 200 || resp.StatusCode == 503 {
+			if code == http.StatusOK {
 				p.emit(StepHealth, KindDone, "")
 				return nil
 			}
 		}
 		if time.Now().After(deadline) {
-			err := fmt.Errorf("core /health did not become ready — check %s/run/core.log", p.Answers.Root)
+			err := fmt.Errorf("core /health did not return HTTP 200 — check %s/run/core.log", p.Answers.Root)
 			p.emit(StepHealth, KindError, err.Error())
 			return err
 		}
@@ -421,9 +502,6 @@ func lineKind(l execstream.Line) StepKind {
 	return KindLine
 }
 
-// writeSystemdUnitFor mirrors write_systemd_user/write_systemd_system from
-// onboard.sh. System units still need sudo to install; we only write the
-// unit file here and let the caller drive systemctl (streamed to the viewport).
 func writeSystemdUnitFor(root string, system bool) error {
 	unitBody := fmt.Sprintf(`[Unit]
 Description=MuxCore host stack
@@ -461,8 +539,6 @@ WantedBy=%s
 		return err
 	}
 	tmp.Close()
-	// System units require root; caller (sudo systemctl) does not copy the
-	// file for us, so do it here with sudo install.
 	cmd := exec.Command("sudo", "install", "-m", "0644", tmp.Name(), "/etc/systemd/system/muxcore.service")
 	return cmd.Run()
 }

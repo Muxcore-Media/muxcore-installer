@@ -44,7 +44,7 @@ watch progress and any errors without losing your place.
    viewport, `y` to accept. Not skippable, even with `MUXCORE_NONINTERACTIVE`.
 2. **Install folder** — default, recommended (`/opt/muxcore` if writable),
    browse, or type a path. Detects an existing install and offers
-   reuse/upgrade/reinstall.
+   **reconfigure** / **restart-only** / **fresh**.
 3. **Runtime** — host processes or Docker Compose (with a live check for
    Docker/Compose availability), then how it should stay running: run once,
    a user `systemd --user` service, or a system service.
@@ -169,11 +169,15 @@ Developer-only: `MUXCORE_LAB_BIN` copies unpublished binaries from a local `bin/
 
 ## GitHub releases
 
-Module binaries come from `github.com/Muxcore-Media/<module>/releases`. If a
-token is already in `GITHUB_TOKEN`, `GH_TOKEN`, `MUXCORE_GITHUB_TOKEN`, or
-`~/.config/muxcore/github.token`, it is used. Otherwise the installer tries a
-public download and prompts only if GitHub says the asset is private.
+Module binaries come from Forgejo releases at `git.zem.systems/muxcore/<module>`
+first; GitHub (`github.com/Muxcore-Media/<module>/releases`) is an optional
+public mirror. Every tarball is verified against the release `SHA256SUMS`.
+If a token is already in `FORGEJO_TOKEN`, `MUXCORE_FORGEJO_TOKEN`, or
+`~/.config/muxcore/forgejo.token`, it is used for private Forgejo assets.
+GitHub tokens (`GITHUB_TOKEN`, `GH_TOKEN`, `MUXCORE_GITHUB_TOKEN`, or
+`~/.config/muxcore/github.token`) are tried when Forgejo is unavailable.
 
 `muxcore-setup` itself is published the same way — build with
-`scripts/build-release.sh` and upload with `gh release create`/`upload` (see
-that script's header) — so `get-onboard.sh` has something to fetch.
+`scripts/build-release.sh` and upload with `scripts/publish-forgejo-release-assets.sh`
+(or `publish-github-release-assets.sh` for the mirror) — so `get-onboard.sh`
+has something to fetch.

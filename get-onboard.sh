@@ -7,7 +7,9 @@ set -euo pipefail
 
 # Baked pin — override with MUXCORE_INSTALLER_TAG. Not "latest".
 INSTALLER_TAG="${MUXCORE_INSTALLER_TAG:-v0.3.3}"
-INSTALLER_REPO="${MUXCORE_INSTALLER_REPO:-Muxcore-Media/muxcore-installer}"
+INSTALLER_REPO="${MUXCORE_INSTALLER_REPO:-muxcore-installer}"
+FORGEJO_URL="${MUXCORE_FORGEJO_URL:-${FORGEJO_URL:-https://git.zem.systems}}"
+FORGEJO_ORG="${MUXCORE_FORGEJO_ORG:-${FORGEJO_ORG:-muxcore}}"
 GITHUB_ORG="${MUXCORE_GITHUB_ORG:-Muxcore-Media}"
 BIN_NAME="muxcore-setup"
 
@@ -64,7 +66,21 @@ EOF
   exit 1
 }
 
-bootstrap_token() {
+bootstrap_forgejo_token() {
+  if [[ -n "${FORGEJO_TOKEN:-}" ]]; then printf '%s' "$FORGEJO_TOKEN"; return 0; fi
+  if [[ -n "${MUXCORE_FORGEJO_TOKEN:-}" ]]; then printf '%s' "$MUXCORE_FORGEJO_TOKEN"; return 0; fi
+  local f
+  for f in \
+    "${MUXCORE_FORGEJO_TOKEN_FILE:-}" \
+    "$HOME/.config/muxcore/forgejo.token"; do
+    [[ -n "$f" && -f "$f" && -r "$f" ]] || continue
+    tr -d '[:space:]' <"$f"
+    return 0
+  done
+  return 1
+}
+
+bootstrap_github_token() {
   if [[ -n "${GITHUB_TOKEN:-}" ]]; then printf '%s' "$GITHUB_TOKEN"; return 0; fi
   if [[ -n "${GH_TOKEN:-}" ]]; then printf '%s' "$GH_TOKEN"; return 0; fi
   if [[ -n "${MUXCORE_GITHUB_TOKEN:-}" ]]; then printf '%s' "$MUXCORE_GITHUB_TOKEN"; return 0; fi
@@ -83,8 +99,7 @@ bootstrap_token() {
 }
 
 curl_auth() {
-  local token
-  token="$(bootstrap_token 2>/dev/null || true)"
+  local token="$1"; shift
   if [[ -n "$token" ]]; then
     curl --proto '=https' --tlsv1.2 -fsSL \
       -H "Authorization: Bearer ${token}" \
@@ -106,7 +121,6 @@ script_dir() {
 }
 
 find_local_binary() {
-  # Piped curl|bash has no real script dir — never treat CWD as the installer.
   if [[ ! -t 0 && -z "${BASH_SOURCE[0]:-}" ]]; then
     return 1
   fi
@@ -143,7 +157,7 @@ verify_sha256() {
   local tarball="$1" sums="$2" want name got
   name="$(basename "$tarball")"
   want="$(awk -v n="$name" '$2==n || $2=="*"n {print $1; exit}' "$sums" 2>/dev/null || true)"
-  [[ -n "$want" ]] || { echo "note: no SHA-256 entry for $name — skipping verify" >&2; return 0; }
+  [[ -n "$want" ]] || die "no SHA-256 entry for $name in SHA256SUMS"
   got="$(sha256_file "$tarball")" || die "no sha256sum/shasum on PATH to verify download"
   if [[ "$got" != "$want" ]]; then
     die "checksum mismatch for $name (got $got want $want)"
@@ -166,33 +180,43 @@ extract_binary() {
   printf '%s\n' "$found"
 }
 
-# GitHub's plain releases/download/... URL 404s for a private repo even with
-# a valid token — private assets must go through the numeric asset-ID API
-# endpoint instead. Needs jq; degrades to the direct-URL error without it.
-asset_id_by_name() {
+forgejo_release_url() {
+  local asset="$1"
+  printf '%s/%s/%s/releases/download/%s/%s' "$FORGEJO_URL" "$FORGEJO_ORG" "$INSTALLER_REPO" "$INSTALLER_TAG" "$asset"
+}
+
+github_release_url() {
+  local asset="$1"
+  printf 'https://github.com/%s/%s/releases/download/%s/%s' "$GITHUB_ORG" "$INSTALLER_REPO" "$INSTALLER_TAG" "$asset"
+}
+
+asset_id_by_name_github() {
   local asset_name="$1" token="$2"
   command -v jq >/dev/null 2>&1 || return 1
   [[ -n "$token" ]] || return 1
   curl --proto '=https' --tlsv1.2 -fsSL \
     -H "Authorization: Bearer ${token}" \
     -H "Accept: application/vnd.github+json" \
-    "https://api.github.com/repos/${INSTALLER_REPO}/releases/tags/${INSTALLER_TAG}" \
+    "https://api.github.com/repos/${GITHUB_ORG}/${INSTALLER_REPO}/releases/tags/${INSTALLER_TAG}" \
     | jq -r --arg n "$asset_name" '.assets[]? | select(.name == $n) | .id' | head -1
 }
 
-# Downloads a named release asset to dest, trying the plain URL first and
-# falling back to the authenticated asset-ID endpoint for private repos.
 fetch_release_asset() {
-  local asset_name="$1" dest="$2" token id
-  local url="https://github.com/${INSTALLER_REPO}/releases/download/${INSTALLER_TAG}/${asset_name}"
-  if curl_auth -o "$dest" "$url" 2>/dev/null; then
+  local asset_name="$1" dest="$2"
+  local fj_token gh_token id url
+  fj_token="$(bootstrap_forgejo_token 2>/dev/null || true)"
+  if curl_auth "$fj_token" -o "$dest" "$(forgejo_release_url "$asset_name")" 2>/dev/null; then
     return 0
   fi
-  token="$(bootstrap_token 2>/dev/null || true)"
-  [[ -n "$token" ]] || return 1
-  id="$(asset_id_by_name "$asset_name" "$token" 2>/dev/null || true)"
+  gh_token="$(bootstrap_github_token 2>/dev/null || true)"
+  url="$(github_release_url "$asset_name")"
+  if curl_auth "$gh_token" -o "$dest" "$url" 2>/dev/null; then
+    return 0
+  fi
+  [[ -n "$gh_token" ]] || return 1
+  id="$(asset_id_by_name_github "$asset_name" "$gh_token" 2>/dev/null || true)"
   [[ -n "$id" && "$id" != "null" ]] || return 1
-  curl_auth -o "$dest" "https://api.github.com/repos/${INSTALLER_REPO}/releases/assets/${id}"
+  curl_auth "$gh_token" -o "$dest" "https://api.github.com/repos/${GITHUB_ORG}/${INSTALLER_REPO}/releases/assets/${id}"
 }
 
 fetch_binary() {
@@ -209,13 +233,13 @@ fetch_binary() {
   tarball="$cache/${asset}"
   sums="$cache/SHA256SUMS"
 
-  echo "==> fetching MuxCore installer ${INSTALLER_TAG} (${os}/${arch})" >&2
+  echo "==> fetching MuxCore installer ${INSTALLER_TAG} (${os}/${arch}) from Forgejo" >&2
   fetch_release_asset "$asset" "$tarball" \
-    || die "could not download $BIN_NAME ${INSTALLER_TAG} for ${os}/${arch} (set GITHUB_TOKEN if the repo is still private — needs jq too)"
-  fetch_release_asset "SHA256SUMS" "$sums" 2>/dev/null || true
-  if [[ -s "$sums" ]]; then
-    verify_sha256 "$tarball" "$sums"
-  fi
+    || die "could not download $BIN_NAME ${INSTALLER_TAG} for ${os}/${arch} (set FORGEJO_TOKEN or GITHUB_TOKEN if releases are private)"
+  fetch_release_asset "SHA256SUMS" "$sums" \
+    || die "could not download SHA256SUMS for ${INSTALLER_TAG} (required)"
+  [[ -s "$sums" ]] || die "SHA256SUMS for ${INSTALLER_TAG} is missing or empty"
+  verify_sha256 "$tarball" "$sums"
   extract_binary "$tarball" "$dest" || die "release tarball did not contain $BIN_NAME"
 }
 
