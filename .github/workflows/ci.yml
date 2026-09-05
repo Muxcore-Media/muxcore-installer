@@ -15,7 +15,9 @@ jobs:
     steps:
       - name: Clean runner workspace
         run: rm -rf "${GITHUB_WORKSPACE}/"* "${RUNNER_TEMP}/"* 2>/dev/null; true
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: Muxcore-Media/mvp/.github/actions/checkout-mirror@main
+        with:
+          token: ${{ secrets.MUXCORE_CI_TOKEN || github.token }}
       - name: go build / vet / gofmt
         run: |
           set -euo pipefail
