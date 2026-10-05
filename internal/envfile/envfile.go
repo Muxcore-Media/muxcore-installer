@@ -64,6 +64,20 @@ func (f *File) Set(key, val string) {
 	f.vals[key] = val
 }
 
+// Delete removes key from the file (no-op if absent).
+func (f *File) Delete(key string) {
+	if _, ok := f.vals[key]; !ok {
+		return
+	}
+	delete(f.vals, key)
+	for i, k := range f.order {
+		if k == key {
+			f.order = append(f.order[:i], f.order[i+1:]...)
+			break
+		}
+	}
+}
+
 // SetAll is a convenience wrapper around repeated Set calls. Keys are
 // applied in sorted order so the resulting file is deterministic across
 // runs (Go map iteration order is randomized).

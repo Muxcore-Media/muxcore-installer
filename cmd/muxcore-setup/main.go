@@ -98,7 +98,7 @@ Env vars (non-interactive mode):
   INSTALL_RUNTIME            host | compose
   MUXCORE_KEEP_MODE          once | user | system | compose
   MUXCORE_BIND_ALL=1         listen on all interfaces (default: localhost only)
-  MUXCORE_PROFILE            sqlite | postgres
+  MUXCORE_DB_BACKEND         sqlite | postgres (default sqlite; legacy MUXCORE_PROFILE=sqlite|postgres still read, deprecated)
   DATABASE_URL               Postgres connection string (when profile=postgres)
   MVP_LIBRARY_ROOT           movie library path
   MVP_TV_LIBRARY_ROOT        TV library path

@@ -262,7 +262,7 @@ func (m *Model) viewSummary() string {
 		}
 	}
 	b.WriteString(line("Metadata:", metaDesc+", "+a.MetadataLang))
-	b.WriteString(line("Database:", a.Profile))
+	b.WriteString(line("Database:", a.DBBackend))
 	if a.HWAccelEnabled {
 		b.WriteString(line("Hardware accel:", a.HWAccelKind))
 	}

@@ -27,13 +27,26 @@ source "$ROOT/lib/common.sh"
 # shellcheck disable=SC1091
 source "$ROOT/lib/modules.sh"
 
+# DB selector: MUXCORE_DB_BACKEND (sqlite|postgres). MUXCORE_PROFILE is reserved
+# for core's security profile (dev|household); a legacy sqlite|postgres value is
+# honoured with a warning and never passed through to core.
+case "${MUXCORE_PROFILE:-}" in
+  sqlite | postgres)
+    if [[ -z "${MUXCORE_DB_BACKEND:-}" ]]; then
+      MUXCORE_DB_BACKEND="$MUXCORE_PROFILE"
+    fi
+    echo "warning: MUXCORE_PROFILE=$MUXCORE_PROFILE is deprecated for the database selector; use MUXCORE_DB_BACKEND" >&2
+    unset MUXCORE_PROFILE
+    ;;
+esac
+
 export MUXCORE_INSECURE_DISABLE_TLS=true
 export MUXCORE_LOG_LEVEL="${MUXCORE_LOG_LEVEL:-info}"
 export MUXCORE_CONFIG="${MUXCORE_CONFIG:-$ROOT/muxcore.json}"
 MESH="${MUXCORE_MESH_ADDR:-127.0.0.1:9090}"
 
 if [[ -z "${ENABLED_MODULES:-}" ]]; then
-  ENABLED_MODULES="$(resolve_enabled_modules "${MUXCORE_LIBRARIES:-Movies,TV}" "${MUXCORE_PLAYBACK:-}" "${MUXCORE_PROFILE:-sqlite}")"
+  ENABLED_MODULES="$(resolve_enabled_modules "${MUXCORE_LIBRARIES:-Movies,TV}" "${MUXCORE_PLAYBACK:-}" "${MUXCORE_DB_BACKEND:-sqlite}")"
 fi
 export ENABLED_MODULES
 
@@ -80,7 +93,7 @@ stop_all() {
   done
 }
 
-PROFILE="${MUXCORE_PROFILE:-${INSTALLER_PROFILE:-sqlite}}"
+PROFILE="${MUXCORE_DB_BACKEND:-${INSTALLER_PROFILE:-sqlite}}"
 
 ensure_postgres() {
   if [[ -n "${DATABASE_URL:-}" || -n "${PGHOST:-}" ]]; then
@@ -89,7 +102,7 @@ ensure_postgres() {
   fi
   if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
     cat >&2 <<EOF
-FAIL: MUXCORE_PROFILE=postgres requires either:
+FAIL: MUXCORE_DB_BACKEND=postgres requires either:
   - DATABASE_URL (or PGHOST/PGUSER/PGPASSWORD/PGDATABASE), or
   - Docker to start postgres:16-alpine on 127.0.0.1:5432
 EOF
@@ -167,12 +180,12 @@ fi
 
 stop_all
 
-echo "==> host stack (profile=${PROFILE}; ${ENABLED_MODULES})"
+echo "==> host stack (db=${PROFILE}; ${ENABLED_MODULES})"
 
 if [[ "$PROFILE" == "postgres" ]]; then
   ensure_postgres
 elif [[ "$PROFILE" != "sqlite" ]]; then
-  echo "FAIL: unknown MUXCORE_PROFILE=$PROFILE (want sqlite|postgres)" >&2
+  echo "FAIL: unknown MUXCORE_DB_BACKEND=$PROFILE (want sqlite|postgres)" >&2
   exit 2
 fi
 

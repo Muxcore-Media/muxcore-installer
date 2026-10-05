@@ -104,7 +104,7 @@ func (p *Pipeline) Run(ctx context.Context) error {
 	}
 
 	a.EnabledModules = modules.Resolve(modules.Answers{
-		Libraries: a.Libraries, Playback: a.Playback, Profile: a.Profile,
+		Libraries: a.Libraries, Playback: a.Playback, Profile: a.DBBackend,
 	})
 
 	if err := a.EnsureAdminPassword(); err != nil {
@@ -158,6 +158,11 @@ func (p *Pipeline) stepConfigure() error {
 
 	restartOnly := a.ExistingChoice == "restart-only"
 	envPath := filepath.Join(root, ".env")
+	if migrated, err := migrateEnvFile(envPath); err != nil {
+		p.emit(StepConfigure, KindWarn, "could not migrate legacy MUXCORE_PROFILE in .env: "+err.Error())
+	} else if migrated {
+		p.emit(StepConfigure, KindLine, "migrated .env: MUXCORE_PROFILE=sqlite|postgres -> MUXCORE_DB_BACKEND (MUXCORE_PROFILE is now reserved for core's security profile)")
+	}
 	examplePath := filepath.Join(root, ".env.example")
 
 	if restartOnly {
@@ -209,7 +214,7 @@ func (p *Pipeline) stepConfigure() error {
 func (p *Pipeline) envKV(a *Answers) map[string]string {
 	kv := map[string]string{
 		"INSTALL_RUNTIME":              a.Runtime,
-		"MUXCORE_PROFILE":              a.Profile,
+		"MUXCORE_DB_BACKEND":           a.DBBackend,
 		"MUXCORE_LIBRARIES":            joinCSV(a.Libraries),
 		"MUXCORE_PLAYBACK":             joinCSV(a.Playback),
 		"MVP_ADMIN_USER":               a.AdminUser,
@@ -256,7 +261,7 @@ func (p *Pipeline) envKV(a *Answers) map[string]string {
 	if a.HasLibrary("Music") {
 		kv["MUSICBRAINZ_FIXTURE"] = "1"
 	}
-	if a.Profile == "postgres" && a.DatabaseURL != "" {
+	if a.DBBackend == "postgres" && a.DatabaseURL != "" {
 		kv["DATABASE_URL"] = a.DatabaseURL
 	}
 	if a.Jellyfin.URL != "" {

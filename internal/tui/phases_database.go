@@ -9,7 +9,7 @@ func (m *Model) initDatabase() {
 		{Label: "SQLite", Desc: "Recommended for a single machine — zero extra setup"},
 		{Label: "Postgres", Desc: "Bring your own DATABASE_URL, or let us start a local Docker container"},
 	}, false)
-	if m.answers.Profile == "postgres" {
+	if m.answers.DBBackend == "postgres" {
 		m.dbMenu.Cursor = 1
 	}
 	m.dbURLInput = newTextInput("DATABASE_URL (blank = local Docker postgres:16-alpine)", m.answers.DatabaseURL, false)
@@ -27,7 +27,7 @@ func (m *Model) updateDatabase(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.dbURLInput.Blur()
 			return m, nil
 		case "enter":
-			m.answers.Profile = "postgres"
+			m.answers.DBBackend = "postgres"
 			m.answers.DatabaseURL = m.dbURLInput.Value()
 			m.afterDatabase()
 			return m, nil
@@ -41,11 +41,11 @@ func (m *Model) updateDatabase(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	if m.dbMenu.HandleKey(km) {
 		if m.dbMenu.Cursor == 0 {
-			m.answers.Profile = "sqlite"
+			m.answers.DBBackend = "sqlite"
 			m.afterDatabase()
 			return m, nil
 		}
-		m.answers.Profile = "postgres"
+		m.answers.DBBackend = "postgres"
 		m.dbURLInput.Focus()
 	}
 	return m, nil

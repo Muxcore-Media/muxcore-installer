@@ -44,9 +44,12 @@ func runNonInteractive() int {
 	if v := os.Getenv("MUXCORE_KEEP_MODE"); v != "" {
 		a.KeepMode = v
 	}
-	if v := os.Getenv("MUXCORE_PROFILE"); v != "" {
-		a.Profile = v
+	be, legacy := wizard.ResolveDBBackend(os.Getenv("MUXCORE_DB_BACKEND"), os.Getenv("MUXCORE_PROFILE"), a.DBBackend)
+	if legacy {
+		fmt.Fprintln(os.Stderr, wizard.LegacyProfileWarning)
+		_ = os.Unsetenv("MUXCORE_PROFILE") // do not leak the DB selector to core
 	}
+	a.DBBackend = be
 	if v := os.Getenv("DATABASE_URL"); v != "" {
 		a.DatabaseURL = v
 	}

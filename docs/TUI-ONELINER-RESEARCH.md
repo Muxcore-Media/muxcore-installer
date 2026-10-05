@@ -259,7 +259,7 @@ Package map (illustrative; confirm at impl time):
 
 ### Docker
 
-Optional. Only for `MUXCORE_PROFILE=postgres` without `DATABASE_URL` (already documented). Default sqlite path must work with **zero** containers. If they want Docker: detect `docker`/`podman`, do not install the engine unless they confirm, and prefer “here is the official two-step” over re-implementing get.docker.com.
+Optional. Only for `MUXCORE_DB_BACKEND=postgres` without `DATABASE_URL` (already documented). Default sqlite path must work with **zero** containers. If they want Docker: detect `docker`/`podman`, do not install the engine unless they confirm, and prefer “here is the official two-step” over re-implementing get.docker.com.
 
 ### systemd vs user systemd vs none
 

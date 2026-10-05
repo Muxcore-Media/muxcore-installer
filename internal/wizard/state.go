@@ -59,7 +59,7 @@ type Answers struct {
 	MetadataLang  string // e.g. en-US
 
 	// Database
-	Profile     string // sqlite | postgres
+	DBBackend   string // sqlite | postgres (env: MUXCORE_DB_BACKEND)
 	DatabaseURL string
 
 	// Hardware transcoding
@@ -84,7 +84,7 @@ func Default(root string) Answers {
 		AdminUser:    "admin",
 		TMDBFixture:  true,
 		MetadataLang: "en-US",
-		Profile:      "sqlite",
+		DBBackend:    "sqlite",
 	}
 }
 
@@ -120,7 +120,7 @@ func LoadFromEnvFile(root string) (*Answers, error) {
 	a.Root = root
 	a.Runtime = f.Get("INSTALL_RUNTIME", a.Runtime)
 	a.KeepMode = f.Get("MUXCORE_KEEP_MODE", a.KeepMode)
-	a.Profile = f.Get("MUXCORE_PROFILE", a.Profile)
+	a.DBBackend, _ = ResolveDBBackend(f.Get("MUXCORE_DB_BACKEND", ""), f.Get("MUXCORE_PROFILE", ""), a.DBBackend)
 	a.DatabaseURL = f.Get("DATABASE_URL", "")
 	a.AdminUser = f.Get("MVP_ADMIN_USER", a.AdminUser)
 	a.AdminPass = f.Get("MVP_ADMIN_PASSWORD", "")
