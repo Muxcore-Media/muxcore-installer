@@ -133,8 +133,8 @@ Pins: [`versions.env`](versions.env). Matrix: [`PIN-MATRIX.md`](PIN-MATRIX.md).
 
 ## Homelab / umbrella developers
 
-If you maintain the full MuxCore module workspace (Forgejo submodules, vault soak
-stack), use the umbrella repo's [`AGENTS.md`](https://git.zem.systems/muxcore/umbrella/src/branch/main/AGENTS.md)
+If you maintain the full MuxCore module workspace (module submodules, vault soak
+stack), use the umbrella repo's [`AGENTS.md`](https://github.com/Muxcore-Media/umbrella/blob/main/AGENTS.md)
 instead of this installer for day-to-day deploy:
 
 | Task | Command |
@@ -169,15 +169,12 @@ Developer-only: `MUXCORE_LAB_BIN` copies unpublished binaries from a local `bin/
 
 ## GitHub releases
 
-Module binaries come from Forgejo releases at `git.zem.systems/muxcore/<module>`
-first; GitHub (`github.com/Muxcore-Media/<module>/releases`) is an optional
-public mirror. Every tarball is verified against the release `SHA256SUMS`.
-If a token is already in `FORGEJO_TOKEN`, `MUXCORE_FORGEJO_TOKEN`, or
-`~/.config/muxcore/forgejo.token`, it is used for private Forgejo assets.
-GitHub tokens (`GITHUB_TOKEN`, `GH_TOKEN`, `MUXCORE_GITHUB_TOKEN`, or
-`~/.config/muxcore/github.token`) are tried when Forgejo is unavailable.
+Module binaries come from GitHub Releases at
+`https://github.com/Muxcore-Media/<module>/releases`. Every tarball is verified
+against the release `SHA256SUMS`. For private assets, GitHub tokens
+(`GITHUB_TOKEN`, `GH_TOKEN`, `MUXCORE_GITHUB_TOKEN`, or
+`~/.config/muxcore/github.token`) are used.
 
 `muxcore-setup` itself is published the same way — build with
-`scripts/build-release.sh` and upload with `scripts/publish-forgejo-release-assets.sh`
-(or `publish-github-release-assets.sh` for the mirror) — so `get-onboard.sh`
-has something to fetch.
+`scripts/build-release.sh` and upload with `scripts/publish-github-release-assets.sh`
+so `get-onboard.sh` has something to fetch.

@@ -1,52 +1,74 @@
+# Generated from Muxcore-Media/umbrella scripts/ci-templates/go-module-ci.yml
+# by scripts/sync-ci.sh — edit the template, not this copy (ADR-0003).
 name: CI
 
 on:
   push:
-    branches: [master, main]
+    branches: [main, master]
+    paths-ignore: ["**.md", "docs/**", "LICENSE"]
   pull_request:
-    branches: [master, main]
+    paths-ignore: ["**.md", "docs/**", "LICENSE"]
+  workflow_dispatch:
 
-permissions: read-all
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  GOPRIVATE: github.com/Muxcore-Media/*
+  GONOSUMDB: github.com/Muxcore-Media/*
+  GOFLAGS: -mod=readonly
 
 jobs:
-  build:
-    name: Build, vet, dry-run
-    runs-on: self-hosted
+  test:
+    name: Build, vet, test
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
-      - name: Clean runner workspace
-        run: rm -rf "${GITHUB_WORKSPACE}/"* "${RUNNER_TEMP}/"* 2>/dev/null; true
-      - uses: Muxcore-Media/mvp/.github/actions/checkout-mirror@main
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
         with:
-          token: ${{ secrets.MUXCORE_CI_TOKEN || github.token }}
-      - name: go build / vet / gofmt
+          go-version-file: go.mod
+          cache: true
+      - name: Private module access
+        env:
+          TOKEN: ${{ secrets.MUXCORE_CI_TOKEN }}
         run: |
-          set -euo pipefail
-          go build ./...
-          go vet ./...
-          unformatted="$(gofmt -l .)"
-          if [[ -n "$unformatted" ]]; then
-            echo "gofmt needs to be run on:" >&2
-            echo "$unformatted" >&2
-            exit 1
+          if [ -n "$TOKEN" ]; then
+            git config --global url."https://x-access-token:${TOKEN}@github.com/Muxcore-Media/".insteadOf "https://github.com/Muxcore-Media/"
           fi
-      - name: shellcheck embedded scripts
+      - name: No filesystem replace directives
         run: |
-          set -euo pipefail
-          scripts=(get-onboard.sh up.sh bootstrap-auth.sh smoke-fixture.sh lib/common.sh lib/modules.sh)
-          if command -v shellcheck >/dev/null 2>&1; then
-            echo "==> shellcheck ${scripts[*]}"
-            shellcheck -x "${scripts[@]}"
-          else
-            echo "==> shellcheck not installed; bash -n fallback"
-            for s in "${scripts[@]}"; do
-              echo "bash -n $s"
-              bash -n "$s"
-            done
+          if grep -nE '^\s*(replace\s+)?\S+\s+(v\S+\s+)?=>\s+(\.|/)' go.mod; then
+            echo "::error::go.mod must not contain filesystem replace directives (ADR-0011)"; exit 1
           fi
-      - name: non-interactive dry-run
+      - run: go build ./...
+      - run: go vet ./...
+      - run: go test -race -count=1 -timeout 15m ./...
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Non-blocking until the module's lint debt is cleared (roadmap T-M1-11);
+    # set repository variable LINT_BLOCKING=true to make it a gate.
+    continue-on-error: ${{ vars.LINT_BLOCKING != 'true' }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Private module access
+        env:
+          TOKEN: ${{ secrets.MUXCORE_CI_TOKEN }}
         run: |
-          set -euo pipefail
-          go build -o /tmp/muxcore-setup ./cmd/muxcore-setup
-          rm -rf "$RUNNER_TEMP/muxcore-dry-run" && mkdir -p "$RUNNER_TEMP/muxcore-dry-run"
-          cd "$RUNNER_TEMP/muxcore-dry-run"
-          MUXCORE_I_AGREE=1 MUXCORE_NONINTERACTIVE=1 MUXCORE_DRY_RUN=1 /tmp/muxcore-setup
+          if [ -n "$TOKEN" ]; then
+            git config --global url."https://x-access-token:${TOKEN}@github.com/Muxcore-Media/".insteadOf "https://github.com/Muxcore-Media/"
+          fi
+      - uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.12.2

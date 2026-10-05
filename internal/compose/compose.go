@@ -35,12 +35,12 @@ func Bin() ([]string, error) {
 	return nil, fmt.Errorf("docker compose or podman compose is required for the Compose runtime")
 }
 
-// RegistryPrefix returns the OCI image prefix (Forgejo/LAN registry).
+// RegistryPrefix returns the OCI image prefix (LAN registry by default).
 func RegistryPrefix() string {
 	if v := os.Getenv("MUXCORE_REGISTRY"); v != "" {
 		return strings.TrimRight(v, "/")
 	}
-	return "git.zem.systems/muxcore"
+	return "localhost:5000/muxcore"
 }
 
 func image(name string) string {

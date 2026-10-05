@@ -11,7 +11,7 @@ This note recommends how to implement that surface so it is safe, portable, and 
 
 ## Recommendation in one paragraph
 
-Ship a **tiny static landing script** at `https://getmuxcore.zem.systems` (grey-cloud DNS → dawn/dusk nginx, same pattern as `admin`/`mux`/`auth`). That script only: detect OS/arch, download a **version-pinned installer tarball + SHA-256**, verify, extract, then exec the real wizard with stdin rebound to `/dev/tty`. The wizard is **bash + a UI adapter**: prefer a **pinned Gum binary** (PATH → cache → GitHub/Forgejo release with checksums), then `dialog`, then `whiptail`, then `read -e`. Do **not** make Python Textual or a custom Bubble Tea binary a hard dependency of first-run. Default process model stays **`up.sh` pid files** (already works without systemd). Offer **user systemd** then **system systemd** as opt-in. Native Windows is out of scope; **WSL is Linux**. Never `curl | sudo bash`. Never skip the legal gate unless an explicit `MUXCORE_I_AGREE=1` is set.
+Ship a **tiny static landing script** at `https://getmuxcore.zem.systems` (grey-cloud DNS → dawn/dusk nginx, same pattern as `admin`/`mux`/`auth`). That script only: detect OS/arch, download a **version-pinned installer tarball + SHA-256**, verify, extract, then exec the real wizard with stdin rebound to `/dev/tty`. The wizard is **bash + a UI adapter**: prefer a **pinned Gum binary** (PATH → cache → GitHub release with checksums), then `dialog`, then `whiptail`, then `read -e`. Do **not** make Python Textual or a custom Bubble Tea binary a hard dependency of first-run. Default process model stays **`up.sh` pid files** (already works without systemd). Offer **user systemd** then **system systemd** as opt-in. Native Windows is out of scope; **WSL is Linux**. Never `curl | sudo bash`. Never skip the legal gate unless an explicit `MUXCORE_I_AGREE=1` is set.
 
 ---
 
@@ -102,8 +102,8 @@ https://releases…/muxcore-installer-vX.Y.Z.sha256
 
 Hosting options, in order for *this* homelab:
 
-1. **Best: static file on vault, proxied by dawn/dusk.** Add `"getmuxcore.zem.systems"` to `nix-production/modules/roles/ingress.nix` (`proxyPass` to a tiny nginx/caddy on vault, or even `alias` a file). Grey-cloud A/AAAA on desk like `admin`/`mux`/`auth`. The landing script is a git-tracked file in `muxcore-installer` (e.g. `get-onboard.sh`) rsynced or released. **Same bytes** as GitHub/Forgejo raw.
-2. **Also good: the landing URL is a 302 to a Forgejo/GitHub release asset** (`…/releases/download/vX.Y.Z/get-onboard.sh`). Pin the tag in the published one-liner docs. k3s-style “always main” is worse for MuxCore because you want a pin matrix.
+1. **Best: static file on vault, proxied by dawn/dusk.** Add `"getmuxcore.zem.systems"` to `nix-production/modules/roles/ingress.nix` (`proxyPass` to a tiny nginx/caddy on vault, or even `alias` a file). Grey-cloud A/AAAA on desk like `admin`/`mux`/`auth`. The landing script is a git-tracked file in `muxcore-installer` (e.g. `get-onboard.sh`) rsynced or released. **Same bytes** as GitHub raw.
+2. **Also good: the landing URL is a 302 to a GitHub release asset** (`…/releases/download/vX.Y.Z/get-onboard.sh`). Pin the tag in the published one-liner docs. k3s-style “always main” is worse for MuxCore because you want a pin matrix.
 3. **Acceptable: Cloudflare Worker that only `fetch()`es a pinned release URL and returns it** with `Content-Type: text/plain` and a long cache. No request-dependent body. Useful if you want `getmuxcore.zem.systems` without a new nginx vhost — but dawn/dusk already do vhosts, so this is optional.
 4. **Avoid: Worker that generates the script, “latest” floating rewrite, or HTML marketing page at the same URL.** Browsers hitting `getmuxcore.zem.systems` can get a small HTML *index* at `/` **only if** `curl` still gets the script. That requires `User-Agent` sniffing, which is the same family of tricks as pipe detection. Prefer: `/` is always the script; marketing lives at `mux.zem.systems` or a `/info` page.
 
@@ -126,7 +126,7 @@ Landing-script contract (rustup + k3s hybrid):
 - `set -eu`; `curl -fsSL` (or wget fallback, rustup-style; skip snap-curl).
 - Detect `uname -s/-m` → `linux|darwin` × `amd64|arm64` (already in `lib/common.sh`).
 - Resolve version: `MUXCORE_INSTALLER_TAG` env, else a **default tag baked into the landing file at release time** (not `latest`).
-- Download tarball + `.sha256` from Forgejo first, GitHub mirror second.
+- Download tarball + `.sha256` from GitHub Releases.
 - `sha256sum -c` (or `shasum -a 256` on macOS) **before** `tar xf`.
 - Extract to `$XDG_CACHE_HOME/muxcore-installer/$TAG` or a temp dir; exec `onboard.sh`.
 - If `[ ! -t 0 ]` and interactive: `exec … < /dev/tty` (rustup). If no `/dev/tty` and not `MUXCORE_NONINTERACTIVE=1`: fail with a clear message.
@@ -167,7 +167,7 @@ Landing-script contract (rustup + k3s hybrid):
 
 3. Never block first-run on “please apt install gum”
    - Package-manager install of gum is optional sugar (brew/pacman/dnf/nix)
-   - Adding Charm’s apt/yum repo is a trust decision; prefer the GitHub/Forgejo tarball
+   - Adding Charm’s apt/yum repo is a trust decision; prefer the GitHub release tarball
 
 4. TERM / color
    - If TERM=dumb or not a TTY → backend f

@@ -1,6 +1,6 @@
 // Package ghrelease resolves release tokens and downloads release assets with
-// progress callbacks. Forgejo (git.zem.systems/muxcore) is the primary origin;
-// GitHub is an optional public mirror.
+// progress callbacks. GitHub Releases
+// (https://github.com/Muxcore-Media/<repo>/releases) is the sole origin.
 package ghrelease
 
 import (
@@ -16,29 +16,7 @@ import (
 	"time"
 )
 
-// ForgejoURL is the base URL for the origin Forgejo instance.
-func ForgejoURL() string {
-	if v := os.Getenv("MUXCORE_FORGEJO_URL"); v != "" {
-		return strings.TrimRight(v, "/")
-	}
-	if v := os.Getenv("FORGEJO_URL"); v != "" {
-		return strings.TrimRight(v, "/")
-	}
-	return "https://git.zem.systems"
-}
-
-// ForgejoOrg is the muxcore org/owner on Forgejo.
-func ForgejoOrg() string {
-	if v := os.Getenv("MUXCORE_FORGEJO_ORG"); v != "" {
-		return v
-	}
-	if v := os.Getenv("FORGEJO_ORG"); v != "" {
-		return v
-	}
-	return "muxcore"
-}
-
-// Org is the GitHub org releases mirror under.
+// Org is the GitHub org that hosts releases.
 func Org() string {
 	if v := os.Getenv("MUXCORE_GITHUB_ORG"); v != "" {
 		return v
@@ -66,29 +44,6 @@ func Token() string {
 	return ""
 }
 
-// ForgejoToken resolves a Forgejo API token for private release assets.
-func ForgejoToken() string {
-	for _, k := range []string{"FORGEJO_TOKEN", "MUXCORE_FORGEJO_TOKEN"} {
-		if v := os.Getenv(k); v != "" {
-			return v
-		}
-	}
-	home, _ := os.UserHomeDir()
-	candidates := []string{
-		os.Getenv("MUXCORE_FORGEJO_TOKEN_FILE"),
-		filepath.Join(home, ".config", "muxcore", "forgejo.token"),
-	}
-	for _, f := range candidates {
-		if f == "" {
-			continue
-		}
-		if b, err := os.ReadFile(f); err == nil {
-			return strings.TrimSpace(string(b))
-		}
-	}
-	return ""
-}
-
 // SaveToken persists a GitHub token the user pasted in.
 func SaveToken(tok string) error {
 	home, _ := os.UserHomeDir()
@@ -101,19 +56,14 @@ func SaveToken(tok string) error {
 
 var httpClient = &http.Client{Timeout: 60 * time.Second}
 
-// ForgejoAssetURL builds a direct Forgejo release download URL.
-func ForgejoAssetURL(repo, tag, asset string) string {
-	return fmt.Sprintf("%s/%s/%s/releases/download/%s/%s", ForgejoURL(), ForgejoOrg(), repo, tag, asset)
-}
-
-// GitHubAssetURL builds the GitHub mirror download URL.
+// GitHubAssetURL builds the GitHub Releases download URL.
 func GitHubAssetURL(repo, tag, asset string) string {
 	return fmt.Sprintf("https://github.com/%s/%s/releases/download/%s/%s", Org(), repo, tag, asset)
 }
 
-// AssetURL returns the preferred (Forgejo) direct download URL.
+// AssetURL returns the direct GitHub Releases download URL.
 func AssetURL(repo, tag, asset string) string {
-	return ForgejoAssetURL(repo, tag, asset)
+	return GitHubAssetURL(repo, tag, asset)
 }
 
 // ProgressFunc reports (bytesRead, totalBytes) periodically; total may be 0
@@ -180,15 +130,11 @@ func download(url, dest, token string, progress ProgressFunc) (int, error) {
 	return resp.StatusCode, nil
 }
 
-// DownloadReleaseAsset tries Forgejo first, then GitHub mirror.
+// DownloadReleaseAsset downloads a release asset from GitHub Releases, falling
+// back to the authenticated API endpoint for private assets when a token is set.
 func DownloadReleaseAsset(repo, tag, asset, dest string, progress ProgressFunc) (int, error) {
-	token := ForgejoToken()
-	code, err := Download(ForgejoAssetURL(repo, tag, asset), dest, token, progress)
-	if err == nil && code == 200 {
-		return code, nil
-	}
 	ghToken := Token()
-	code, err = Download(GitHubAssetURL(repo, tag, asset), dest, ghToken, progress)
+	code, err := Download(GitHubAssetURL(repo, tag, asset), dest, ghToken, progress)
 	if err == nil && code == 200 {
 		return code, nil
 	}
@@ -244,7 +190,7 @@ func AssetByIDURL(repo string, id int64) string {
 	return fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/assets/%d", Org(), repo, id)
 }
 
-// DownloadSHA256SUMS fetches SHA256SUMS for a release (Forgejo first, GitHub fallback).
+// DownloadSHA256SUMS fetches SHA256SUMS for a release from GitHub Releases.
 func DownloadSHA256SUMS(repo, tag, dest string) error {
 	code, err := DownloadReleaseAsset(repo, tag, "SHA256SUMS", dest, nil)
 	if err != nil {

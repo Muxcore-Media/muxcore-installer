@@ -91,7 +91,7 @@ func TestWriteMediauiproxWhenPlayerSelected(t *testing.T) {
 
 func TestRegistryPrefixDefault(t *testing.T) {
 	t.Setenv("MUXCORE_REGISTRY", "")
-	if got := RegistryPrefix(); got != "git.zem.systems/muxcore" {
+	if got := RegistryPrefix(); got != "localhost:5000/muxcore" {
 		t.Fatalf("default registry = %q", got)
 	}
 }

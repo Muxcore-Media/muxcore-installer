@@ -8,8 +8,6 @@ set -euo pipefail
 # Baked pin — override with MUXCORE_INSTALLER_TAG. Not "latest".
 INSTALLER_TAG="${MUXCORE_INSTALLER_TAG:-v0.3.3}"
 INSTALLER_REPO="${MUXCORE_INSTALLER_REPO:-muxcore-installer}"
-FORGEJO_URL="${MUXCORE_FORGEJO_URL:-${FORGEJO_URL:-https://git.zem.systems}}"
-FORGEJO_ORG="${MUXCORE_FORGEJO_ORG:-${FORGEJO_ORG:-muxcore}}"
 GITHUB_ORG="${MUXCORE_GITHUB_ORG:-Muxcore-Media}"
 BIN_NAME="muxcore-setup"
 
@@ -64,20 +62,6 @@ Safer two-step:
   bash get-muxcore.sh
 EOF
   exit 1
-}
-
-bootstrap_forgejo_token() {
-  if [[ -n "${FORGEJO_TOKEN:-}" ]]; then printf '%s' "$FORGEJO_TOKEN"; return 0; fi
-  if [[ -n "${MUXCORE_FORGEJO_TOKEN:-}" ]]; then printf '%s' "$MUXCORE_FORGEJO_TOKEN"; return 0; fi
-  local f
-  for f in \
-    "${MUXCORE_FORGEJO_TOKEN_FILE:-}" \
-    "$HOME/.config/muxcore/forgejo.token"; do
-    [[ -n "$f" && -f "$f" && -r "$f" ]] || continue
-    tr -d '[:space:]' <"$f"
-    return 0
-  done
-  return 1
 }
 
 bootstrap_github_token() {
@@ -180,11 +164,6 @@ extract_binary() {
   printf '%s\n' "$found"
 }
 
-forgejo_release_url() {
-  local asset="$1"
-  printf '%s/%s/%s/releases/download/%s/%s' "$FORGEJO_URL" "$FORGEJO_ORG" "$INSTALLER_REPO" "$INSTALLER_TAG" "$asset"
-}
-
 github_release_url() {
   local asset="$1"
   printf 'https://github.com/%s/%s/releases/download/%s/%s' "$GITHUB_ORG" "$INSTALLER_REPO" "$INSTALLER_TAG" "$asset"
@@ -203,11 +182,7 @@ asset_id_by_name_github() {
 
 fetch_release_asset() {
   local asset_name="$1" dest="$2"
-  local fj_token gh_token id url
-  fj_token="$(bootstrap_forgejo_token 2>/dev/null || true)"
-  if curl_auth "$fj_token" -o "$dest" "$(forgejo_release_url "$asset_name")" 2>/dev/null; then
-    return 0
-  fi
+  local gh_token id url
   gh_token="$(bootstrap_github_token 2>/dev/null || true)"
   url="$(github_release_url "$asset_name")"
   if curl_auth "$gh_token" -o "$dest" "$url" 2>/dev/null; then
@@ -233,9 +208,9 @@ fetch_binary() {
   tarball="$cache/${asset}"
   sums="$cache/SHA256SUMS"
 
-  echo "==> fetching MuxCore installer ${INSTALLER_TAG} (${os}/${arch}) from Forgejo" >&2
+  echo "==> fetching MuxCore installer ${INSTALLER_TAG} (${os}/${arch}) from GitHub Releases" >&2
   fetch_release_asset "$asset" "$tarball" \
-    || die "could not download $BIN_NAME ${INSTALLER_TAG} for ${os}/${arch} (set FORGEJO_TOKEN or GITHUB_TOKEN if releases are private)"
+    || die "could not download $BIN_NAME ${INSTALLER_TAG} for ${os}/${arch} (set GITHUB_TOKEN if releases are private)"
   fetch_release_asset "SHA256SUMS" "$sums" \
     || die "could not download SHA256SUMS for ${INSTALLER_TAG} (required)"
   [[ -s "$sums" ]] || die "SHA256SUMS for ${INSTALLER_TAG} is missing or empty"
