@@ -72,7 +72,7 @@ resolve_enabled_modules() {
 module_tag() {
   local name="$1" line repo tag
   if [[ "$name" == muxcored ]]; then
-    printf '%s\n' "${CORE_TAG:-v0.5.0}"
+    printf '%s\n' "${CORE_TAG:-v0.6.7}"
     return 0
   fi
   while IFS= read -r line; do
