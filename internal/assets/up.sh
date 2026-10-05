@@ -96,6 +96,18 @@ EOF
     return 1
   fi
   local name="${MUXCORE_PG_CONTAINER:-muxcore-installer-pg}"
+  # Generated once, kept 0600 with the installer's other generated secrets.
+  local pwfile="$DATA/secrets/postgres.password" pgpass
+  if [[ -s "$pwfile" ]]; then
+    pgpass="$(<"$pwfile")"
+  elif docker ps -a --format '{{.Names}}' | grep -qx "$name"; then
+    echo "FAIL: postgres container $name exists but $pwfile is missing; set PGPASSWORD/DATABASE_URL or remove the container" >&2
+    return 1
+  else
+    pgpass="$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+    (umask 077 && printf '%s\n' "$pgpass" >"$pwfile")
+  fi
+  chmod 600 "$pwfile"
   if docker ps --format '{{.Names}}' | grep -qx "$name"; then
     echo "==> postgres already running ($name)"
   elif docker ps -a --format '{{.Names}}' | grep -qx "$name"; then
@@ -105,13 +117,13 @@ EOF
     echo "==> docker run postgres:16-alpine ($name) on 127.0.0.1:5432"
     docker run -d --name "$name" \
       -e POSTGRES_USER=muxcore \
-      -e POSTGRES_PASSWORD=muxcore \
+      -e POSTGRES_PASSWORD="$pgpass" \
       -e POSTGRES_DB=muxcore \
       -p 127.0.0.1:5432:5432 \
       postgres:16-alpine >/dev/null
   fi
-  export PGHOST=127.0.0.1 PGPORT=5432 PGUSER=muxcore PGPASSWORD=muxcore PGDATABASE=muxcore PGSSLMODE=disable
-  export DATABASE_URL="postgres://muxcore:muxcore@127.0.0.1:5432/muxcore?sslmode=disable"
+  export PGHOST=127.0.0.1 PGPORT=5432 PGUSER=muxcore PGPASSWORD="$pgpass" PGDATABASE=muxcore PGSSLMODE=disable
+  export DATABASE_URL="postgres://muxcore:${pgpass}@127.0.0.1:5432/muxcore?sslmode=disable"
   local _
   for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40; do
     if docker exec "$name" pg_isready -U muxcore >/dev/null 2>&1; then
@@ -199,7 +211,7 @@ if [[ "$PROFILE" == "postgres" ]]; then
     PGHOST="${PGHOST:-127.0.0.1}" \
     PGPORT="${PGPORT:-5432}" \
     PGUSER="${PGUSER:-muxcore}" \
-    PGPASSWORD="${PGPASSWORD:-muxcore}" \
+    PGPASSWORD="${PGPASSWORD:-}" \
     PGDATABASE="${PGDATABASE:-muxcore}" \
     PGSSLMODE="${PGSSLMODE:-disable}"
 else
