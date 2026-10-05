@@ -37,6 +37,7 @@ CI: `.github/workflows/ci.yml`.
 - Module binaries and `media-ui-app` dist fetch from GitHub Releases; verify every tarball against release `SHA256SUMS`.
 - Never default `MVP_ADMIN_PASSWORD` to `admin-dev-only` — generate 16 chars or require explicit env.
 - `restart-only` must load existing `.env` and must not clobber library paths, playback, or admin creds.
+- Security profile: new installs are `household` (ADR-0016/0017; README "Security profile"). Never set `MUXCORE_INSECURE_DISABLE_TLS` outside the dev branches; never switch an existing dev install without the operator's opt-in (`--household`). Key material lives in `mesh/` and must stay out of backups (ADR-0023).
 - Pins: `versions.env` / `PIN-MATRIX.md`. Do not edit polluted workspace dumps (`MASTER-ROADMAP.md` Appendix H).
 
 ## Homelab developers

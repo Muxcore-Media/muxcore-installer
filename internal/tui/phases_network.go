@@ -2,6 +2,8 @@ package tui
 
 import (
 	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/Muxcore-Media/muxcore-installer/internal/mesh"
 )
 
 func (m *Model) initNetwork() {
@@ -28,7 +30,12 @@ func (m *Model) updateNetwork(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) viewNetwork() string {
-	note := styleWarn.Render("Note: this installer runs with TLS disabled (MUXCORE_INSECURE_DISABLE_TLS) — fine on a trusted home network, not for the open internet.")
+	note := styleHint.Render("Security: MuxCore's services talk to each other over TLS with their own certificate authority " +
+		"(household profile). The admin and player pages are plain HTTP — keep them on your home network, or put an HTTPS " +
+		"reverse proxy in front for anything else. An existing install that runs the dev profile stays dev until you re-run with --household.")
+	if m.answers.RequestedProfile == mesh.ProfileDev {
+		note = styleWarn.Render("Note: --dev — the mesh runs without TLS (dev profile). Development only, never for real data or the open internet.")
+	}
 	return styleHint.Render("Decide who can open the MuxCore admin and player pages.") + "\n\n" +
 		m.networkMenu.View() + "\n\n" + note
 }

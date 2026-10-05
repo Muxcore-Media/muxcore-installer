@@ -1,6 +1,19 @@
 #!/usr/bin/env bash
 # Start/stop the MuxCore host stack from installer bin/ (selected modules only).
-# Usage: ./up.sh | ./up.sh stop
+# Usage: ./up.sh [up] [--dev] | ./up.sh stop
+#
+# Security profile (ADR-0016), from MUXCORE_PROFILE in .env:
+#   household (default)  TLS on every mesh hop. Core keeps its CA in mesh/ca
+#                        (MUXCORE_DATA_DIR=mesh) and exports the public ca.crt to
+#                        mesh/public; every module gets its own identity dir
+#                        mesh/id/<id> (MUXCORE_TLS_DIR) and enrolls once with a
+#                        single-use token derived from MUXCORE_ENROLL_SECRET
+#                        (ADR-0017). mesh/ is key material: never back it up
+#                        (ADR-0023).
+#   dev                  plaintext mesh (MUXCORE_INSECURE_DISABLE_TLS=true), loud
+#                        warning; development only. `./up.sh --dev` forces it for
+#                        one run. A .env with the legacy insecure flag and no
+#                        MUXCORE_PROFILE is dev too (core's phase-0 inference).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
@@ -40,7 +53,6 @@ case "${MUXCORE_PROFILE:-}" in
     ;;
 esac
 
-export MUXCORE_INSECURE_DISABLE_TLS=true
 export MUXCORE_LOG_LEVEL="${MUXCORE_LOG_LEVEL:-info}"
 export MUXCORE_CONFIG="${MUXCORE_CONFIG:-$ROOT/muxcore.json}"
 MESH="${MUXCORE_MESH_ADDR:-127.0.0.1:9090}"
@@ -68,6 +80,10 @@ start_one() {
   echo $! >"$pidfile"
 }
 
+# start_mod NAME BIN [VAR=VALUE...]: NAME is also the module's mesh ID. In the
+# household profile the module gets MUXCORE_TLS_DIR=mesh/id/NAME and, until it
+# has enrolled, its single-use MUXCORE_BOOTSTRAP_TOKEN (exported, never on a
+# command line).
 start_mod() {
   local name="$1" bin_name="$2"; shift 2
   module_enabled "$name" || return 0
@@ -75,7 +91,34 @@ start_mod() {
     echo "WARN: skip $name — missing bin/$bin_name" >&2
     return 0
   fi
-  start_one "$name" env "$@" "$BIN/$bin_name"
+  mesh_identity_env "$name" || return 0
+  MUXCORE_BOOTSTRAP_TOKEN="$ID_TOKEN" \
+    start_one "$name" env ${ID_ENV[@]+"${ID_ENV[@]}"} "$@" "$BIN/$bin_name"
+}
+
+# mesh_identity_env ID: sets ID_ENV (identity env for ID) and ID_TOKEN (its
+# enrollment token while it has no certificate yet). No-op in dev.
+mesh_identity_env() {
+  local id="$1" dir err
+  ID_ENV=()
+  ID_TOKEN=""
+  [[ "$SEC_PROFILE" == household ]] || return 0
+  dir="$MESH_ID_DIR/$id"
+  mkdir -p "$dir"
+  chmod 700 "$dir"
+  ID_ENV=(MUXCORE_MODULE_ID="$id" MUXCORE_TLS_DIR="$dir")
+  [[ -s "$dir/module.crt" && -s "$dir/module.key" ]] && return 0
+  err="$(mktemp)"
+  if ! ID_TOKEN="$(MESH_MUXCORED="$BIN/muxcored" MESH_CA_DIR="$MESH_CA_DIR" mesh_enroll_token "$MESH_SECRET" "$id" 2>"$err")"; then
+    echo "WARN: skip $id — cannot compute its enrollment token: $(cat "$err")" >&2
+    rm -f "$err"
+    return 1
+  fi
+  if grep -q 'already enrolled' "$err"; then
+    echo "WARN: $id has no identity in $dir but already enrolled with core (identity lost?)." >&2
+    echo "      To let it enroll again: ./bin/muxcored enroll reset $id --ca-dir $MESH_CA_DIR && ./up.sh" >&2
+  fi
+  rm -f "$err"
 }
 
 stop_all() {
@@ -150,24 +193,81 @@ EOF
 
 usage() {
   cat <<'EOF'
-usage: ./up.sh [stop]
+usage: ./up.sh [up] [--dev] | ./up.sh stop
 
   (default)  Start host stack from bin/ (modules listed in ENABLED_MODULES)
+  --dev      Run this start in the insecure dev profile (plaintext mesh),
+             whatever MUXCORE_PROFILE says. Development only.
   stop       Stop all processes tracked in run/*.pid
 EOF
 }
 
-cmd="${1:-up}"
-case "$cmd" in
-  -h|--help) usage; exit 0 ;;
-  stop) stop_all; exit 0 ;;
-  up|"") ;;
-  *)
-    echo "unknown arg: $cmd" >&2
-    usage >&2
-    exit 2
-    ;;
-esac
+cmd=up
+FORCE_DEV=0
+for arg in "$@"; do
+  case "$arg" in
+    -h|--help) usage; exit 0 ;;
+    --dev) FORCE_DEV=1 ;;
+    stop|up) cmd="$arg" ;;
+    *)
+      echo "unknown arg: $arg" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+if [[ "$cmd" == stop ]]; then
+  stop_all
+  exit 0
+fi
+
+# ---- security profile (ADR-0016) ----
+if ! resolve_security_profile "$FORCE_DEV"; then
+  exit 2
+fi
+MESH_DIR="$ROOT/mesh"
+MESH_CA_DIR="$MESH_DIR/ca"
+MESH_PUBLIC_DIR="$MESH_DIR/public"
+MESH_ID_DIR="$MESH_DIR/id"
+MESH_SECRET=""
+CORE_HEALTH_URL="http://127.0.0.1:8080/health"
+CURL_TLS=()
+ADMIN_SEC=()
+if [[ "$SEC_PROFILE" == dev ]]; then
+  print_dev_banner "$SEC_SOURCE"
+  export MUXCORE_PROFILE=dev MUXCORE_INSECURE_DISABLE_TLS=true
+  C=(MUXCORE_GRPC_ADDR="$MESH" MUXCORE_PROFILE=dev MUXCORE_INSECURE_DISABLE_TLS=true MUXCORE_MESH_DIAL_LOCAL=true)
+  CORE_SEC=(MUXCORE_PROFILE=dev MUXCORE_INSECURE_DISABLE_TLS=true)
+  # admin-ui: plain-HTTP session cookies (and its deprecated mesh-insecure alias).
+  ADMIN_SEC=(ADMIN_UI_INSECURE=true)
+else
+  # Nothing may turn plaintext on in household: core and every module refuse it.
+  unset MUXCORE_INSECURE_DISABLE_TLS MUXCORE_DEV_TLS_SKIP MUXCORE_GRPC_INSECURE ADMIN_UI_INSECURE
+  export MUXCORE_PROFILE=household
+  MESH_SECRET="$(ensure_enroll_secret "$ROOT/.env" "${MUXCORE_ENROLL_SECRET:-}")" || exit 1
+  # Only core gets the secret, via its exported environment (see the core start).
+  unset MUXCORE_ENROLL_SECRET
+  mkdir -p "$MESH_DIR" "$MESH_CA_DIR" "$MESH_PUBLIC_DIR" "$MESH_ID_DIR"
+  chmod 700 "$MESH_DIR" "$MESH_CA_DIR" "$MESH_ID_DIR"
+  chmod 755 "$MESH_PUBLIC_DIR"
+  echo "==> security profile: household ($SEC_SOURCE) — mesh TLS, CA in mesh/ca, identities in mesh/id"
+  # Modules bind host-less ports (":9403") and advertise them as such; on one
+  # host, MUXCORE_MESH_DIAL_LOCAL makes peers dial them at 127.0.0.1, which is
+  # a SAN of every certificate core issues (no MUXCORE_ENROLL_DNS_NAMES needed).
+  C=(MUXCORE_GRPC_ADDR="$MESH" MUXCORE_PROFILE=household MUXCORE_TLS_CA="$MESH_PUBLIC_DIR/ca.crt" MUXCORE_MESH_DIAL_LOCAL=true)
+  CORE_SEC=(
+    MUXCORE_PROFILE=household
+    MUXCORE_DATA_DIR="$MESH_DIR"
+    MUXCORE_GRPC_CA_CERT_DIR="$MESH_CA_DIR"
+    MUXCORE_CA_EXPORT_DIR="$MESH_PUBLIC_DIR"
+    MUXCORE_TLS_SERVER_SANS="${MUXCORE_TLS_SERVER_SANS:-}"
+    MUXCORE_ENROLL_SAN_ALLOW="${MUXCORE_ENROLL_SAN_ALLOW:-}"
+  )
+  # Core's HTTP port is HTTPS too, with the same auto-issued certificate.
+  CORE_HEALTH_URL="https://127.0.0.1:8080/health"
+  CURL_TLS=(--cacert "$MESH_PUBLIC_DIR/ca.crt")
+fi
+export SEC_PROFILE
 
 if ! have_bin muxcored; then
   cat >&2 <<EOF
@@ -189,28 +289,35 @@ elif [[ "$PROFILE" != "sqlite" ]]; then
   exit 2
 fi
 
-start_one core env \
+# The enrollment secret reaches core through its exported environment, not
+# its command line (empty in dev).
+MUXCORE_ENROLL_SECRET="$MESH_SECRET" start_one core env \
+  "${CORE_SEC[@]}" \
   MUXCORE_CONFIG="$ROOT/muxcore.json" \
-  MUXCORE_INSECURE_DISABLE_TLS=true \
   MUXCORE_STORAGE_DIR="${MUXCORE_STORAGE_DIR:-$DATA/storage}" \
   MUXCORE_LOG_LEVEL="${MUXCORE_LOG_LEVEL:-info}" \
   "$BIN/muxcored"
 
 _i=0
 while [[ "$_i" -lt 40 ]]; do
-  code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/health || echo 000)
+  code=$(curl -s ${CURL_TLS[@]+"${CURL_TLS[@]}"} -o /dev/null -w '%{http_code}' "$CORE_HEALTH_URL" || echo 000)
   [[ "$code" == "200" || "$code" == "503" ]] && break
   sleep 0.5
   _i=$((_i + 1))
 done
-
-C=(MUXCORE_GRPC_ADDR="$MESH" MUXCORE_INSECURE_DISABLE_TLS=true)
+if [[ "$SEC_PROFILE" == household && ! -s "$MESH_PUBLIC_DIR/ca.crt" ]]; then
+  echo "WARN: core has not exported its CA to $MESH_PUBLIC_DIR yet — modules cannot enroll until it does; see $RUN/core.log" >&2
+fi
 
 start_mod api-rest api-rest \
   "${C[@]}" MUXCORE_MODULE_ID=api-rest \
   API_REST_HTTP_ADDR="${API_REST_HTTP_ADDR:-:18080}" \
   API_REST_GRPC_ADDR="${API_REST_GRPC_ADDR:-:9400}"
 
+# auth-local creates the admin (with the admin role) on an empty database
+# (AUTH_BOOTSTRAP_*; exported, never on a command line). bootstrap-auth.sh
+# then only logs in.
+AUTH_BOOTSTRAP_USER="${MVP_ADMIN_USER:-admin}" AUTH_BOOTSTRAP_PASSWORD="${MVP_ADMIN_PASSWORD:-}" \
 start_mod auth-local auth-local \
   "${C[@]}" MUXCORE_MODULE_ID=auth-local \
   AUTH_DB_PATH="$DATA/auth/auth.db" \
@@ -267,7 +374,7 @@ start_mod health-monitor health-monitor \
   "${C[@]}" MUXCORE_MODULE_ID=health-monitor \
   MUXCORE_MESH_DIAL_LOCAL=true \
   HEALTH_MONITOR_GRPC_ADDR="${HEALTH_MONITOR_GRPC_ADDR:-:9202}" \
-  HEALTH_MONITOR_HTTP_ADDR="${HEALTH_MONITOR_HTTP_ADDR:-:9203}" \
+  HEALTH_MONITOR_HTTP_ADDR="${HEALTH_MONITOR_HTTP_ADDR:-127.0.0.1:9203}" \
   HEALTH_MONITOR_INTERVAL="${HEALTH_MONITOR_INTERVAL:-5s}"
 
 if [[ "${MUXCORE_OBSERVABILITY:-0}" == "1" || "${MUXCORE_OBSERVABILITY:-}" == "true" ]]; then
@@ -284,9 +391,9 @@ if [[ "${MUXCORE_OBSERVABILITY:-0}" == "1" || "${MUXCORE_OBSERVABILITY:-}" == "t
 fi
 
 start_mod admin-ui admin-ui \
+  "${C[@]}" ${ADMIN_SEC[@]+"${ADMIN_SEC[@]}"} \
   ADMIN_UI_ADDR=":8082" \
   ADMIN_UI_CORE_ADDR="$MESH" \
-  ADMIN_UI_INSECURE=true \
   ADMIN_UI_AUTH_ADDR="http://127.0.0.1:9401" \
   ADMIN_UI_HEALTH_MONITOR_URL="${ADMIN_UI_HEALTH_MONITOR_URL:-http://127.0.0.1:9203}" \
   MUXCORE_MESH_DIAL_LOCAL=true
@@ -428,8 +535,10 @@ if [[ "${MVP_ENABLE_MEDIA_UI:-0}" != "0" ]] && module_enabled mediauiprox; then
   UI_DIST="${MEDIA_UI_DIST:-}"
   if [[ -z "$UI_DIST" || ! -d "$UI_DIST" ]]; then
     echo "WARN: MuxCore player selected but MEDIA_UI_DIST is missing — skipping" >&2
-  elif have_bin mediauiprox; then
-    start_one media-ui env \
+  elif have_bin mediauiprox && mesh_identity_env media-ui; then
+    # The BFF dials media-movies/tvshows over mesh TLS as module "media-ui".
+    MUXCORE_BOOTSTRAP_TOKEN="$ID_TOKEN" start_one media-ui env \
+      "${C[@]}" ${ID_ENV[@]+"${ID_ENV[@]}"} \
       MEDIA_UI_LISTEN="${MEDIA_UI_LISTEN:-:5173}" \
       MEDIA_UI_DIST="$UI_DIST" \
       MEDIA_UI_REQUIRE_AUTH="${MEDIA_UI_REQUIRE_AUTH:-1}" \
@@ -443,7 +552,7 @@ if [[ "${MVP_ENABLE_MEDIA_UI:-0}" != "0" ]] && module_enabled mediauiprox; then
         -dist "$UI_DIST" \
         -auth-http "${AUTH_HTTP_URL:-http://127.0.0.1:9401}"
   else
-    echo "WARN: mediauiprox missing — skipping MuxCore player" >&2
+    echo "WARN: mediauiprox missing or without a mesh identity — skipping MuxCore player" >&2
   fi
 fi
 

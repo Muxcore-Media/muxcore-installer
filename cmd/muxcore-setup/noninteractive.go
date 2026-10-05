@@ -13,7 +13,7 @@ import (
 // runNonInteractive drives the exact same Pipeline the TUI uses, from env
 // vars only, for CI and scripted installs (MUXCORE_NONINTERACTIVE=1). Output
 // is plain, prefixed lines — no TUI dependency, safe for dumb terminals.
-func runNonInteractive() int {
+func runNonInteractive(requestedProfile string) int {
 	if os.Getenv("MUXCORE_I_AGREE") != "1" {
 		fmt.Fprintln(os.Stderr, "error: non-interactive install requires MUXCORE_I_AGREE=1")
 		fmt.Fprintln(os.Stderr, "(MUXCORE_NONINTERACTIVE alone is not consent to the acceptable-use agreement)")
@@ -32,6 +32,7 @@ func runNonInteractive() int {
 
 	a := wizard.Default(root)
 	a.Agreed = true
+	a.RequestedProfile = requestedProfile
 	if v := os.Getenv("MUXCORE_LIBRARIES"); v != "" {
 		a.Libraries = splitCSV(v)
 	}

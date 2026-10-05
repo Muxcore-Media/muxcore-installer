@@ -12,6 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/Muxcore-Media/muxcore-installer/internal/mesh"
 	"github.com/Muxcore-Media/muxcore-installer/internal/wizard"
 )
 
@@ -335,9 +336,13 @@ func (m *Model) viewWork() string {
 
 func (m *Model) viewDone() string {
 	a := m.answers
+	health, security := "http://127.0.0.1:8080/health", "Security:  DEV profile (plaintext mesh) — re-run with --household to switch"
+	if a.SecurityProfile == mesh.ProfileHousehold {
+		health, security = "https://127.0.0.1:8080/health (CA: mesh/public/ca.crt)", "Security:  household (mesh TLS; never back up mesh/)"
+	}
 	body := fmt.Sprintf(
-		"Admin UI:  http://localhost:8082\n  login:   %s / %s\n\nCore health: http://127.0.0.1:8080/health\nCredentials: %s/run/VIEW-ME.txt\nAdmin token: %s/run/admin.token\n\nSmoke:     ./smoke-fixture.sh\nTip:       cat %s/run/VIEW-ME.txt for URLs, libraries, and commands",
-		a.AdminUser, a.AdminPass, a.Root, a.Root, a.Root,
+		"Admin UI:  http://localhost:8082\n  login:   %s / %s\n\nCore health: %s\n%s\nCredentials: %s/run/VIEW-ME.txt\nAdmin token: %s/run/admin.token\n\nSmoke:     ./smoke-fixture.sh\nTip:       cat %s/run/VIEW-ME.txt for URLs, libraries, and commands",
+		a.AdminUser, a.AdminPass, health, security, a.Root, a.Root, a.Root,
 	)
 	if a.HasPlayback("MuxCore player") {
 		body = "Player:    http://127.0.0.1:5173\n" + body

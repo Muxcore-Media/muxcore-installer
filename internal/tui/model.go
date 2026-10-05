@@ -134,6 +134,10 @@ func New(root string) *Model {
 	return m
 }
 
+// SetRequestedProfile records the operator's explicit security profile
+// (--dev / --household / MUXCORE_PROFILE; "" = none).
+func (m *Model) SetRequestedProfile(p string) { m.answers.RequestedProfile = p }
+
 // SetProgram lets background goroutines (download/exec streaming) push
 // tea.Msg values in from outside the normal Update loop.
 func (m *Model) SetProgram(p *tea.Program) { m.program = p }

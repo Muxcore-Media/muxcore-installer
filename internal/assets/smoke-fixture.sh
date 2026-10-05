@@ -3,11 +3,24 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
+if [[ -f "$ROOT/.env" ]]; then
+  # shellcheck disable=SC1091
+  source "$ROOT/.env"
+fi
+
 # shellcheck disable=SC1091
-[[ -f "$ROOT/.env" ]] && source "$ROOT/.env" || true
+source "$ROOT/lib/common.sh"
+resolve_security_profile 0 || exit 1
 
 BIN="$ROOT/bin"
-CORE_URL="${SMOKE_CORE_URL:-http://127.0.0.1:8080}"
+# household: core's HTTP port is HTTPS, verified against the CA it exports.
+CURL_CORE=()
+if [[ "$SEC_PROFILE" == household ]]; then
+  CORE_URL="${SMOKE_CORE_URL:-https://127.0.0.1:8080}"
+  CURL_CORE=(--cacert "$ROOT/mesh/public/ca.crt")
+else
+  CORE_URL="${SMOKE_CORE_URL:-http://127.0.0.1:8080}"
+fi
 API_URL="${SMOKE_API_URL:-http://127.0.0.1:18080}"
 ADMIN_URL="${SMOKE_ADMIN_URL:-http://localhost:8082}"
 TIMEOUT="${SMOKE_TIMEOUT_SEC:-120}"
@@ -46,7 +59,15 @@ fi
 echo "OK essential binaries present (${REQUIRED[*]})"
 
 echo "==> checking core health at ${CORE_URL}/health"
-code=$(curl -s -o /tmp/muxcore-installer-core-health.json -w '%{http_code}' "${CORE_URL}/health" || echo 000)
+code=$(curl -s ${CURL_CORE[@]+"${CURL_CORE[@]}"} -o /tmp/muxcore-installer-core-health.json -w '%{http_code}' "${CORE_URL}/health" || echo 000)
+if [[ "$code" != "200" && "$code" != "503" && "$SEC_PROFILE" == household && -z "${SMOKE_CORE_URL:-}" ]]; then
+  # A core started with `./up.sh --dev` answers plain HTTP; do not restart it.
+  plain=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/health || echo 000)
+  if [[ "$plain" == "200" || "$plain" == "503" ]]; then
+    echo "FAIL: core answers plain HTTP (dev profile, e.g. ./up.sh --dev) but .env configures household; restart with ./up.sh" >&2
+    exit 1
+  fi
+fi
 if [[ "$code" != "200" && "$code" != "503" ]]; then
   echo "core not up (HTTP $code). Attempting ./up.sh ..."
   if ! "$ROOT/up.sh" up; then
@@ -57,7 +78,7 @@ fi
 
 echo "==> waiting for core ${CORE_URL}/health (timeout ${TIMEOUT}s)"
 deadline=$((SECONDS + TIMEOUT))
-until code=$(curl -s -o /tmp/muxcore-installer-core-health.json -w '%{http_code}' "${CORE_URL}/health" || echo 000); \
+until code=$(curl -s ${CURL_CORE[@]+"${CURL_CORE[@]}"} -o /tmp/muxcore-installer-core-health.json -w '%{http_code}' "${CORE_URL}/health" || echo 000); \
   [[ "$code" == "200" || "$code" == "503" ]]; do
   if (( SECONDS >= deadline )); then
     echo "FAIL: core health not ready (last HTTP $code)" >&2
@@ -68,6 +89,18 @@ until code=$(curl -s -o /tmp/muxcore-installer-core-health.json -w '%{http_code}
   sleep 2
 done
 echo "OK core health (HTTP $code)"
+
+# Security profile (ADR-0016): core reports it on /health.
+health_profile="$(sed -n 's/.*"profile":[[:space:]]*"\([a-z]*\)".*/\1/p' /tmp/muxcore-installer-core-health.json 2>/dev/null || true)"
+if [[ -n "$health_profile" && "$health_profile" != "$SEC_PROFILE" ]]; then
+  echo "FAIL: core runs the $health_profile profile, but this install is configured for $SEC_PROFILE" >&2
+  exit 1
+fi
+if [[ "$SEC_PROFILE" == household ]]; then
+  echo "OK core profile household (TLS, verified against mesh/public/ca.crt)"
+else
+  echo "WARN: core runs the DEV security profile (plaintext mesh) — development only" >&2
+fi
 
 echo "==> waiting for api-rest ${API_URL}/api/v1/health"
 until curl -sf "${API_URL}/api/v1/health" >/dev/null 2>&1; do
@@ -118,9 +151,41 @@ if [[ -f "$TOKEN_FILE" ]]; then
   fi
 fi
 
+if [[ "$SEC_PROFILE" == household ]]; then
+  # Every module this install started must have enrolled (ADR-0017).
+  echo "==> mesh identities (mesh/id)"
+  missing_ids=()
+  enrolled=0
+  for pidf in "$ROOT"/run/*.pid; do
+    [[ -f "$pidf" ]] || continue
+    name="$(basename "$pidf" .pid)"
+    [[ "$name" == core ]] && continue
+    if ! kill -0 "$(cat "$pidf")" 2>/dev/null; then
+      [[ -s "$ROOT/mesh/id/$name/module.crt" ]] ||
+        echo "WARN: $name is not running and has no mesh identity — see run/$name.log" >&2
+      continue
+    fi
+    id_deadline=$((SECONDS + 30))
+    until [[ -s "$ROOT/mesh/id/$name/module.crt" ]] || ((SECONDS >= id_deadline)); do
+      sleep 1
+    done
+    if [[ -s "$ROOT/mesh/id/$name/module.crt" ]]; then
+      enrolled=$((enrolled + 1))
+    else
+      missing_ids+=("$name")
+    fi
+  done
+  if ((${#missing_ids[@]})); then
+    echo "FAIL: no mesh identity for: ${missing_ids[*]} (see run/<module>.log)" >&2
+    exit 1
+  fi
+  echo "OK $enrolled running modules enrolled with core's CA"
+fi
+
 cat <<EOF
 
 ======== health check notes ========
+Security profile: ${SEC_PROFILE}
 TMDB_FIXTURE=${TMDB_FIXTURE:-1}
 Movie library: ${MVP_LIBRARY_ROOT:-$ROOT/data/library}
 TV library:    ${MVP_TV_LIBRARY_ROOT:-$ROOT/data/library/tv}

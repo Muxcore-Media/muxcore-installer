@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Muxcore-Media/muxcore-installer/internal/mesh"
 	"github.com/Muxcore-Media/muxcore-installer/internal/pins"
 )
 
@@ -57,9 +58,43 @@ func image(name string) string {
 	}
 }
 
+// ModuleID is the mesh module ID (certificate CN) of a compose service.
+// The MuxCore player BFF ships as mediauiprox but enrolls as media-ui.
+func ModuleID(service string) string {
+	if service == "mediauiprox" {
+		return "media-ui"
+	}
+	return service
+}
+
+// ModuleIDs returns the mesh module IDs of every enabled module service
+// (core excluded), plus media-ui when the player is enabled.
+func ModuleIDs(enabledModules []string, enableMediaUI bool) []string {
+	var out []string
+	seen := map[string]bool{}
+	add := func(id string) {
+		if !seen[id] {
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	for _, m := range enabledModules {
+		if m == "muxcored" {
+			continue
+		}
+		add(ModuleID(m))
+	}
+	if enableMediaUI {
+		add("media-ui")
+	}
+	return out
+}
+
 // Env is the subset of wizard answers the compose file needs.
 type Env struct {
-	Root                  string
+	Root string
+	// Profile is the security profile: household (default when empty) or dev.
+	Profile               string
 	EnabledModules        []string
 	EnableMediaUI         bool
 	MediaUIDist           string
@@ -99,19 +134,45 @@ type svc struct {
 	volumes []string
 }
 
-func writeSvc(b *strings.Builder, root string, s svc) {
+func household(env Env) bool { return env.Profile != mesh.ProfileDev }
+
+// writeSvc renders one module service. In the household profile every
+// module gets its own identity dir (bind mount of <root>/mesh/id/<id> at
+// /mesh/id, MUXCORE_TLS_DIR), core's public CA read-only at /mesh/ca, and its
+// single-use enrollment token from .env (ADR-0017). In dev it runs with the
+// insecure flag, as before.
+func writeSvc(b *strings.Builder, env Env, s svc) {
+	root := env.Root
+	id := ModuleID(s.name)
 	fmt.Fprintf(b, "  %s:\n", s.name)
 	fmt.Fprintf(b, "    image: %s\n", image(s.name))
 	b.WriteString("    environment:\n")
 	b.WriteString("      MUXCORE_GRPC_ADDR: core:9090\n")
-	b.WriteString("      MUXCORE_INSECURE_DISABLE_TLS: \"true\"\n")
-	fmt.Fprintf(b, "      MUXCORE_MODULE_ID: %s\n", s.name)
+	if household(env) {
+		b.WriteString("      MUXCORE_PROFILE: household\n")
+		b.WriteString("      MUXCORE_TLS_DIR: /mesh/id\n")
+		b.WriteString("      MUXCORE_TLS_CA: /mesh/ca/ca.crt\n")
+		fmt.Fprintf(b, "      MUXCORE_BOOTSTRAP_TOKEN: ${%s:?re-run muxcore-setup (mesh enrollment tokens in .env)}\n", mesh.TokenVar(id))
+		// Peers dial a module by its compose service name, so that name
+		// must be a SAN of its certificate (the module ID always is).
+		if id == s.name {
+			fmt.Fprintf(b, "      MUXCORE_ENROLL_DNS_NAMES: %s\n", s.name)
+		}
+	} else {
+		b.WriteString("      MUXCORE_PROFILE: dev\n")
+		b.WriteString("      MUXCORE_INSECURE_DISABLE_TLS: \"true\"\n")
+	}
+	fmt.Fprintf(b, "      MUXCORE_MODULE_ID: %s\n", id)
 	b.WriteString("      MUXCORE_MESH_DIAL_LOCAL: \"true\"\n")
 	for _, e := range s.env {
 		fmt.Fprintf(b, "      %s\n", e)
 	}
 	b.WriteString("    volumes:\n")
 	fmt.Fprintf(b, "      - %s/data:/data\n", root)
+	if household(env) {
+		fmt.Fprintf(b, "      - %s:/mesh/id\n", mesh.IdentityDir(root, id))
+		fmt.Fprintf(b, "      - %s:/mesh/ca:ro\n", mesh.CAExportDir(root))
+	}
 	for _, v := range s.volumes {
 		fmt.Fprintf(b, "      - %s\n", v)
 	}
@@ -160,23 +221,45 @@ func Write(env Env) (string, error) {
 	fmt.Fprintf(&b, "    image: %s\n", image("muxcored"))
 	b.WriteString(`    environment:
       MUXCORE_CONFIG: /app/muxcore.json
-      MUXCORE_INSECURE_DISABLE_TLS: "true"
       MUXCORE_LOG_LEVEL: info
       MUXCORE_STORAGE_DIR: /app/data/storage
-    ports:
+`)
+	healthTest := `curl -sf http://127.0.0.1:8080/health || exit 1`
+	if household(env) {
+		// household (ADR-0016): TLS on gRPC and HTTP with core's own CA; the
+		// CA key lives in <root>/mesh/ca, outside the data dir every module
+		// mounts, and is never in a backup (ADR-0023).
+		b.WriteString(`      MUXCORE_PROFILE: household
+      MUXCORE_GRPC_CA_CERT_DIR: /app/ca
+      MUXCORE_CA_EXPORT_DIR: /app/mesh-ca
+      MUXCORE_TLS_SERVER_SANS: core
+      MUXCORE_ENROLL_SECRET: ${MUXCORE_ENROLL_SECRET:?re-run muxcore-setup (mesh enrollment secret in .env)}
+`)
+		healthTest = `curl -sf --cacert /app/mesh-ca/ca.crt https://127.0.0.1:8080/health || exit 1`
+	} else {
+		b.WriteString(`      MUXCORE_PROFILE: dev
+      MUXCORE_INSECURE_DISABLE_TLS: "true"
+`)
+	}
+	b.WriteString(`    ports:
       - "8080:8080"
       - "9090:9090"
     volumes:
 `)
 	fmt.Fprintf(&b, "      - %s/data:/app/data\n", env.Root)
+	if household(env) {
+		fmt.Fprintf(&b, "      - %s:/app/ca\n", mesh.CADir(env.Root))
+		fmt.Fprintf(&b, "      - %s:/app/mesh-ca\n", mesh.CAExportDir(env.Root))
+	}
 	fmt.Fprintf(&b, "      - %s/muxcore.json:/app/muxcore.json:ro\n", env.Root)
 	for _, m := range libraryMounts(env) {
 		fmt.Fprintf(&b, "      - %s\n", m)
 	}
-	b.WriteString(`    restart: unless-stopped
+	fmt.Fprintf(&b, `    restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:8080/health || exit 1"]
-      interval: 5s
+      test: ["CMD-SHELL", %q]
+      interval: 5s`, healthTest)
+	b.WriteString(`
       timeout: 3s
       retries: 20
 `)
@@ -187,13 +270,16 @@ func Write(env Env) (string, error) {
 		if enabled(env, name) {
 			vols := append([]string{}, libVol...)
 			vols = append(vols, extraVol...)
-			writeSvc(&b, env.Root, svc{name: name, ports: ports, env: kv, volumes: vols})
+			writeSvc(&b, env, svc{name: name, ports: ports, env: kv, volumes: vols})
 		}
 	}
 
 	def("api-rest", []string{"18080:8080"}, nil, `API_REST_HTTP_ADDR: ":8080"`, `API_REST_GRPC_ADDR: ":9400"`)
+	// auth-local creates the admin (with the admin role) on an empty
+	// database; bootstrap-auth.sh then only logs in.
 	def("auth-local", []string{"9401:9401", "9403:9403"}, nil,
-		`AUTH_DB_PATH: /data/auth/auth.db`, `AUTH_GRPC_ADDR: ":9403"`, `AUTH_HTTP_ADDR: ":9401"`)
+		`AUTH_DB_PATH: /data/auth/auth.db`, `AUTH_GRPC_ADDR: ":9403"`, `AUTH_HTTP_ADDR: ":9401"`,
+		`AUTH_BOOTSTRAP_USER: ${MVP_ADMIN_USER:-admin}`, `AUTH_BOOTSTRAP_PASSWORD: ${MVP_ADMIN_PASSWORD:-}`)
 	def("database-sqlite", nil, nil, `SQLITE_DB_PATH: /data/sqlite/muxcore.db`)
 	def("database-postgres", nil, nil, fmt.Sprintf("DATABASE_URL: %s", env.DatabaseURL))
 	def("secrets-file", nil, nil, `SECRETS_STORE: /data/secrets/store.json`, `SECRETS_KEY_FILE: /data/secrets/master.key`)
@@ -203,8 +289,13 @@ func Write(env Env) (string, error) {
 	def("cache-local", nil, nil, `CACHE_LOCAL_GRPC_ADDR: ":9600"`)
 	def("ratelimit-tokenbucket", nil, nil, `RATELIMIT_ENABLED: "false"`)
 	def("health-monitor", []string{"9203:9203"}, nil, `HEALTH_MONITOR_GRPC_ADDR: ":9202"`, `HEALTH_MONITOR_HTTP_ADDR: ":9203"`)
-	def("admin-ui", []string{"8082:8082"}, nil, `ADMIN_UI_ADDR: ":8082"`, `ADMIN_UI_CORE_ADDR: core:9090`,
-		`ADMIN_UI_INSECURE: "true"`, `ADMIN_UI_AUTH_ADDR: http://auth-local:9401`)
+	adminEnv := []string{`ADMIN_UI_ADDR: ":8082"`, `ADMIN_UI_CORE_ADDR: core:9090`, `ADMIN_UI_AUTH_ADDR: http://auth-local:9401`}
+	if !household(env) {
+		// dev only: ADMIN_UI_INSECURE also forces admin-ui's mesh dials to
+		// plaintext, which household refuses.
+		adminEnv = append(adminEnv, `ADMIN_UI_INSECURE: "true"`)
+	}
+	def("admin-ui", []string{"8082:8082"}, nil, adminEnv...)
 	def("notification-default", nil, nil, `NOTIFY_GRPC_ADDR: ":9441"`)
 	def("metadata-tmdb", nil, nil, fmt.Sprintf("TMDB_API_KEY: %s", env.TMDBAPIKey), fmt.Sprintf("TMDB_FIXTURE: %s", env.TMDBFixture))
 	def("metadata-musicbrainz", nil, nil, fmt.Sprintf("MUSICBRAINZ_FIXTURE: %s", env.MusicBrainzFix))
@@ -240,7 +331,7 @@ func Write(env Env) (string, error) {
 		if m := mountHostPath(dist, "/dist-app"); m != "" {
 			mediaVol = append(mediaVol, m)
 		}
-		writeSvc(&b, env.Root, svc{
+		writeSvc(&b, env, svc{
 			name:  "mediauiprox",
 			ports: []string{"5173:5173"},
 			env: []string{

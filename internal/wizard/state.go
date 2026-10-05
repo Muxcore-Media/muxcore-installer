@@ -66,6 +66,12 @@ type Answers struct {
 	HWAccelEnabled bool
 	HWAccelKind    string
 
+	// Security profile (ADR-0016). RequestedProfile is the operator's explicit
+	// choice (--dev / --household / MUXCORE_PROFILE; "" = none);
+	// SecurityProfile is what the pipeline resolved (dev | household).
+	RequestedProfile string
+	SecurityProfile  string
+
 	// Derived
 	EnabledModules []string
 }

@@ -2,6 +2,8 @@ package wizard
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"net/http"
@@ -16,6 +18,7 @@ import (
 	"github.com/Muxcore-Media/muxcore-installer/internal/envfile"
 	"github.com/Muxcore-Media/muxcore-installer/internal/execstream"
 	"github.com/Muxcore-Media/muxcore-installer/internal/fetch"
+	"github.com/Muxcore-Media/muxcore-installer/internal/mesh"
 	"github.com/Muxcore-Media/muxcore-installer/internal/modules"
 	"github.com/Muxcore-Media/muxcore-installer/internal/prereqs"
 	"github.com/Muxcore-Media/muxcore-installer/internal/seedroots"
@@ -99,6 +102,7 @@ func (p *Pipeline) Run(ctx context.Context) error {
 		loaded.Agreed = a.Agreed
 		loaded.ExistingChoice = a.ExistingChoice
 		loaded.ExistingFound = a.ExistingFound
+		loaded.RequestedProfile = a.RequestedProfile
 		p.Answers = loaded
 		a = p.Answers
 	}
@@ -152,9 +156,6 @@ func (p *Pipeline) stepConfigure() error {
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return err
 	}
-	if err := assets.ExtractInto(root); err != nil {
-		return err
-	}
 
 	restartOnly := a.ExistingChoice == "restart-only"
 	envPath := filepath.Join(root, ".env")
@@ -163,13 +164,54 @@ func (p *Pipeline) stepConfigure() error {
 	} else if migrated {
 		p.emit(StepConfigure, KindLine, "migrated .env: MUXCORE_PROFILE=sqlite|postgres -> MUXCORE_DB_BACKEND (MUXCORE_PROFILE is now reserved for core's security profile)")
 	}
+
+	// Security profile (ADR-0016): decided before the assets are extracted,
+	// because switching an existing dev install moves its old scripts aside.
+	existing, err := loadExistingEnv(envPath)
+	if err != nil {
+		return err
+	}
+	plan, err := planSecurity(existing, a.ExistingChoice, a.RequestedProfile)
+	if err != nil {
+		return err
+	}
+	if plan.Migrate && p.DryRun {
+		p.emit(StepConfigure, KindWarn, "dry run: would switch this install from the dev profile to household; leaving it on dev")
+		plan.Profile, plan.Migrate = plan.Existing, false
+	}
+	kind, note := planNote(plan, a.RequestedProfile)
+	p.emit(StepConfigure, kind, note)
+	if plan.Migrate {
+		if err := p.migrateToHousehold(root); err != nil {
+			return err
+		}
+	}
+	a.SecurityProfile = plan.Profile
+
+	if err := assets.ExtractInto(root); err != nil {
+		return err
+	}
 	examplePath := filepath.Join(root, ".env.example")
 
 	if restartOnly {
-		if _, err := os.Stat(envPath); os.IsNotExist(err) {
+		if existing == nil {
 			return fmt.Errorf("restart-only requires existing .env at %s", envPath)
 		}
 		p.emit(StepConfigure, KindLine, "preserving existing .env (restart-only)")
+		if plan.Profile != plan.Existing {
+			// Only the security settings change; library paths, playback and
+			// logins stay as they are.
+			if err := applySecurityEnv(existing, plan.Profile, a.Runtime, a.moduleIDs()); err != nil {
+				return err
+			}
+			if err := existing.Save(); err != nil {
+				return err
+			}
+			p.emit(StepConfigure, KindLine, "updated the security settings in .env (MUXCORE_PROFILE="+plan.Profile+")")
+		}
+		if err := p.ensureMeshDirs(); err != nil {
+			return err
+		}
 		if err := p.writeViewMe(root); err != nil {
 			p.emit(StepConfigure, KindWarn, "VIEW-ME.txt: "+err.Error())
 		}
@@ -182,7 +224,7 @@ func (p *Pipeline) stepConfigure() error {
 		return nil
 	}
 
-	if _, err := os.Stat(envPath); os.IsNotExist(err) {
+	if existing == nil {
 		if data, err := os.ReadFile(examplePath); err == nil {
 			if werr := os.WriteFile(envPath, data, 0o600); werr != nil {
 				p.emit(StepConfigure, KindWarn, "could not seed .env from the example: "+werr.Error())
@@ -196,7 +238,13 @@ func (p *Pipeline) stepConfigure() error {
 
 	kv := p.envKV(a)
 	f.SetAll(kv)
+	if err := applySecurityEnv(f, plan.Profile, a.Runtime, a.moduleIDs()); err != nil {
+		return err
+	}
 	if err := f.Save(); err != nil {
+		return err
+	}
+	if err := p.ensureMeshDirs(); err != nil {
 		return err
 	}
 	if err := p.writeViewMe(root); err != nil {
@@ -211,18 +259,28 @@ func (p *Pipeline) stepConfigure() error {
 	return nil
 }
 
+// ensureMeshDirs creates mesh/ (CA, public CA, one identity dir per module)
+// in the household profile. up.sh does the same on every start; the compose
+// runtime bind-mounts these directories, so they must exist first.
+func (p *Pipeline) ensureMeshDirs() error {
+	a := p.Answers
+	if a.SecurityProfile != mesh.ProfileHousehold {
+		return nil
+	}
+	return mesh.EnsureDirs(a.Root, a.moduleIDs())
+}
+
 func (p *Pipeline) envKV(a *Answers) map[string]string {
 	kv := map[string]string{
-		"INSTALL_RUNTIME":              a.Runtime,
-		"MUXCORE_DB_BACKEND":           a.DBBackend,
-		"MUXCORE_LIBRARIES":            joinCSV(a.Libraries),
-		"MUXCORE_PLAYBACK":             joinCSV(a.Playback),
-		"MVP_ADMIN_USER":               a.AdminUser,
-		"MVP_ADMIN_PASSWORD":           a.AdminPass,
-		"MUXCORE_KEEP_MODE":            a.KeepMode,
-		"MUXCORE_INSECURE_DISABLE_TLS": "true",
-		"ENABLED_MODULES":              joinSpace(a.EnabledModules),
-		"MVP_ENABLE_MEDIA_UI":          "0",
+		"INSTALL_RUNTIME":     a.Runtime,
+		"MUXCORE_DB_BACKEND":  a.DBBackend,
+		"MUXCORE_LIBRARIES":   joinCSV(a.Libraries),
+		"MUXCORE_PLAYBACK":    joinCSV(a.Playback),
+		"MVP_ADMIN_USER":      a.AdminUser,
+		"MVP_ADMIN_PASSWORD":  a.AdminPass,
+		"MUXCORE_KEEP_MODE":   a.KeepMode,
+		"ENABLED_MODULES":     joinSpace(a.EnabledModules),
+		"MVP_ENABLE_MEDIA_UI": "0",
 	}
 	if a.HasPlayback("MuxCore player") {
 		kv["MVP_ENABLE_MEDIA_UI"] = "1"
@@ -293,6 +351,7 @@ func (p *Pipeline) writeCompose(root string) error {
 	kv := p.envKV(a)
 	_, err := compose.Write(compose.Env{
 		Root:                  root,
+		Profile:               a.SecurityProfile,
 		EnabledModules:        a.EnabledModules,
 		EnableMediaUI:         a.HasPlayback("MuxCore player"),
 		MediaUIDist:           kv["MEDIA_UI_DIST"],
@@ -330,7 +389,8 @@ func (p *Pipeline) writeViewMe(root string) error {
 	if a.HasPlayback("MuxCore player") {
 		b.WriteString("  Player:       http://127.0.0.1:5173\n")
 	}
-	b.WriteString("\n  Core health:  http://127.0.0.1:8080/health\n")
+	fmt.Fprintf(&b, "\n  Core health:  %s\n", coreHealthHint(a.SecurityProfile))
+	b.WriteString("\n" + securitySummary(a.SecurityProfile) + "\n")
 	b.WriteString("\nStart:  ./up.sh\nStop:   ./up.sh stop\n")
 	return os.WriteFile(out, []byte(b.String()), 0o600)
 }
@@ -455,20 +515,30 @@ func (p *Pipeline) stepStart(ctx context.Context) error {
 
 func (p *Pipeline) stepHealth(ctx context.Context) error {
 	p.emit(StepHealth, KindStart, "")
+	a := p.Answers
 	deadline := time.Now().Add(120 * time.Second)
-	client := &http.Client{Timeout: 3 * time.Second}
+	url := "http://127.0.0.1:8080/health"
+	if a.SecurityProfile == mesh.ProfileHousehold {
+		// household: core's HTTP port is HTTPS with its auto-issued
+		// certificate (SANs include 127.0.0.1); verify it against the CA core
+		// exports to mesh/public once it is up.
+		url = "https://127.0.0.1:8080/health"
+	}
 	for {
-		resp, err := client.Get("http://127.0.0.1:8080/health")
+		client, err := healthClient(a)
 		if err == nil {
-			code := resp.StatusCode
-			_ = resp.Body.Close()
-			if code == http.StatusOK {
-				p.emit(StepHealth, KindDone, "")
-				return nil
+			resp, gerr := client.Get(url)
+			if gerr == nil {
+				code := resp.StatusCode
+				_ = resp.Body.Close()
+				if code == http.StatusOK {
+					p.emit(StepHealth, KindDone, "")
+					return nil
+				}
 			}
 		}
 		if time.Now().After(deadline) {
-			err := fmt.Errorf("core /health did not return HTTP 200 — check %s/run/core.log", p.Answers.Root)
+			err := fmt.Errorf("core %s did not return HTTP 200 — check %s/run/core.log", url, a.Root)
 			p.emit(StepHealth, KindError, err.Error())
 			return err
 		}
@@ -478,6 +548,45 @@ func (p *Pipeline) stepHealth(ctx context.Context) error {
 		case <-time.After(time.Second):
 		}
 	}
+}
+
+// healthClient returns the HTTP client for the core health probe: plain in
+// dev, TLS verified against core's exported CA in household (an error until
+// core has exported it).
+func healthClient(a *Answers) (*http.Client, error) {
+	if a.SecurityProfile != mesh.ProfileHousehold {
+		return &http.Client{Timeout: 3 * time.Second}, nil
+	}
+	pem, err := os.ReadFile(mesh.CACertPath(a.Root))
+	if err != nil {
+		return nil, err
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(pem) {
+		return nil, fmt.Errorf("no certificate in %s", mesh.CACertPath(a.Root))
+	}
+	return &http.Client{
+		Timeout:   3 * time.Second,
+		Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}},
+	}, nil
+}
+
+// coreHealthHint is the core health URL line for VIEW-ME.txt.
+func coreHealthHint(profile string) string {
+	if profile == mesh.ProfileHousehold {
+		return "https://127.0.0.1:8080/health  (curl --cacert mesh/public/ca.crt …)"
+	}
+	return "http://127.0.0.1:8080/health"
+}
+
+// securitySummary is the security paragraph for VIEW-ME.txt.
+func securitySummary(profile string) string {
+	if profile == mesh.ProfileHousehold {
+		return "Security:     household profile — TLS on every mesh hop, one enrolled identity per module.\n" +
+			"              mesh/ holds the CA key and module keys: never back it up (ADR-0023).\n" +
+			"              Lost a module identity? ./bin/muxcored enroll reset <id> (see README)."
+	}
+	return "Security:     DEV profile — plaintext mesh, development only. " + MigrateHint + "."
 }
 
 func (p *Pipeline) stepAdmin(ctx context.Context) error {

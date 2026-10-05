@@ -51,6 +51,18 @@ Spool tags that overlap must use the same versions.
 
 The public installer does not pin or start acquisition, indexer, or downloader modules.
 
+## Security profile requirement
+
+The installer runs the **household** security profile by default (ADR-0016,
+ADR-0017): every pinned module must enroll for its own mesh certificate, i.e.
+be built on `core/sdk/go/module` **≥ v0.6.4** (`modulesdk.Run` → `meshid.Ensure`,
+meshtls serve/dial), and `core` must be **≥ v0.6.15** (enrollment ledger, CA
+export, `muxcored enroll`). Every Go module tag above meets that (checked
+against each tag's `go.mod`: v0.6.4 or v0.6.5). `media-ui` (`mediauiprox`, the
+MuxCore player BFF) enrolls as module `media-ui`; its release must include the
+`meshid` support from umbrella `_mvp/cmd/mediauiprox`. Do not pin a module
+below these versions without also setting `MUXCORE_PROFILE=dev`.
+
 ## Atomic update rule
 
 When bumping a pin:

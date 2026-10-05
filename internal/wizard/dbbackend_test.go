@@ -114,7 +114,9 @@ func TestConfigureMigratesExistingEnv(t *testing.T) {
 		t.Fatal(err)
 	}
 	b, _ := os.ReadFile(p)
-	if strings.Contains(string(b), "MUXCORE_PROFILE") || !strings.Contains(string(b), "MUXCORE_DB_BACKEND") {
+	// MUXCORE_PROFILE now carries the security profile only (ADR-0016).
+	if strings.Contains(string(b), `MUXCORE_PROFILE="sqlite"`) || !strings.Contains(string(b), "MUXCORE_DB_BACKEND") ||
+		!strings.Contains(string(b), `MUXCORE_PROFILE="household"`) {
 		t.Fatalf(".env not migrated:\n%s", b)
 	}
 	found := false
