@@ -1,11 +1,9 @@
 package tui
 
 import (
-	"encoding/json"
 	"net/http"
 	"time"
 
-	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -58,10 +56,8 @@ func probeTMDB(key string) (bool, string) {
 	if err != nil {
 		return false, err.Error()
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == 200 {
-		var v map[string]any
-		json.NewDecoder(resp.Body).Decode(&v)
 		return true, "valid key"
 	}
 	return false, resp.Status
@@ -105,7 +101,7 @@ func (m *Model) updateMetadata(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case "ctrl+t":
 		m.metaChecking = true
 		m.metaResult = ""
-		return m, tea.Batch(checkTMDBCmd(m.metaKeyInput.Value()), spinner.Tick)
+		return m, tea.Batch(checkTMDBCmd(m.metaKeyInput.Value()), m.metaSpinner.Tick)
 	case "tab":
 		m.metaFocus = 2
 		m.metaKeyInput.Blur()

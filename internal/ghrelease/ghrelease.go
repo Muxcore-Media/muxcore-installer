@@ -88,9 +88,9 @@ func download(url, dest, token string, progress ProgressFunc) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != 200 {
-		io.Copy(io.Discard, resp.Body)
+		_, _ = io.Copy(io.Discard, resp.Body)
 		return resp.StatusCode, nil
 	}
 	tmp := dest + ".partial"
@@ -105,8 +105,8 @@ func download(url, dest, token string, progress ProgressFunc) (int, error) {
 		n, rerr := resp.Body.Read(buf)
 		if n > 0 {
 			if _, werr := out.Write(buf[:n]); werr != nil {
-				out.Close()
-				os.Remove(tmp)
+				_ = out.Close()
+				_ = os.Remove(tmp)
 				return resp.StatusCode, werr
 			}
 			read += int64(n)
@@ -118,12 +118,15 @@ func download(url, dest, token string, progress ProgressFunc) (int, error) {
 			break
 		}
 		if rerr != nil {
-			out.Close()
-			os.Remove(tmp)
+			_ = out.Close()
+			_ = os.Remove(tmp)
 			return resp.StatusCode, rerr
 		}
 	}
-	out.Close()
+	if err := out.Close(); err != nil {
+		_ = os.Remove(tmp)
+		return resp.StatusCode, err
+	}
 	if err := os.Rename(tmp, dest); err != nil {
 		return resp.StatusCode, err
 	}
@@ -169,7 +172,7 @@ func AssetIDByName(repo, tag, name, token string) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != 200 {
 		return 0, fmt.Errorf("github api %s: HTTP %d", url, resp.StatusCode)
 	}
@@ -236,7 +239,7 @@ func VerifySHA256SUMS(sumsPath, filePath string) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	h := sha256.New()
 	if _, err := io.Copy(h, f); err != nil {
 		return err

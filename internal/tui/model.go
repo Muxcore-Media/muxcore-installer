@@ -5,7 +5,6 @@
 package tui
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -77,8 +76,6 @@ type Model struct {
 
 	libMenu *Menu
 
-	mediaRootInput textinput.Model
-	editingRoot    bool
 	mediaRows      []mediaRow
 	mediaCursor    int
 	mediaEditing   bool
@@ -118,7 +115,6 @@ type Model struct {
 	preflightDone      bool
 	preflightBusy      []string
 	preflightDockerBad bool
-	preflightSpin      spinner.Model
 
 	summaryConfirm bool
 
@@ -380,9 +376,6 @@ func (m *Model) routeSpinnerTick(msg spinner.TickMsg) (tea.Model, tea.Cmd) {
 	}
 	return m, cmd
 }
-
-// ctxBackground is a small helper so step files don't each import context.
-func ctxBackground() context.Context { return context.Background() }
 
 func envTruthy(key string) bool {
 	v := os.Getenv(key)

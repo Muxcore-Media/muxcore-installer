@@ -41,8 +41,8 @@ func EnsureWritableDir(dir string) error {
 	if err != nil {
 		return err
 	}
-	f.Close()
-	os.Remove(probe)
+	_ = f.Close()
+	_ = os.Remove(probe)
 	return nil
 }
 
@@ -98,7 +98,7 @@ func writable(p string) bool {
 	if err != nil {
 		return false
 	}
-	f.Close()
-	os.Remove(probe)
+	_ = f.Close()
+	_ = os.Remove(probe)
 	return true
 }

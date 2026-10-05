@@ -78,12 +78,14 @@ func (m *Model) acceptLegal() {
 
 // recordLegalAcceptance writes proof-of-consent into the final install root,
 // once one has been chosen (see afterInstallDir in phases_installdir.go).
-func recordLegalAcceptance(root string) {
+func recordLegalAcceptance(root string) error {
 	out := filepath.Join(root, "data", "legal-accepted.txt")
-	os.MkdirAll(filepath.Dir(out), 0o755)
+	if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
+		return err
+	}
 	body := "accepted_at=" + time.Now().UTC().Format(time.RFC3339) + "\n" +
 		"tos_sha256=" + legaltext.SHA256() + "\n"
-	os.WriteFile(out, []byte(body), 0o644)
+	return os.WriteFile(out, []byte(body), 0o644)
 }
 
 func (m *Model) viewLegal() string {

@@ -37,7 +37,7 @@ func DetectFamily() Family {
 	if err != nil {
 		return Unknown
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	kv := map[string]string{}
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
@@ -173,6 +173,6 @@ func PortInUse(port string) bool {
 	if err != nil {
 		return false
 	}
-	c.Close()
+	_ = c.Close()
 	return true
 }

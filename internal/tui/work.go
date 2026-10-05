@@ -86,9 +86,10 @@ func (w *workState) appendLine(kind wizard.StepKind, text string) {
 		text = lipgloss.NewStyle().Width(w.vp.Width).Render(text)
 	}
 	styled := styleLogLine.Render(text)
-	if kind == wizard.KindWarn {
+	switch kind {
+	case wizard.KindWarn:
 		styled = styleWarn.Render(text)
-	} else if kind == wizard.KindError {
+	case wizard.KindError:
 		styled = styleLogErr.Render(text)
 	}
 	w.lines = append(w.lines, styled)

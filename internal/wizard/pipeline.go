@@ -179,7 +179,9 @@ func (p *Pipeline) stepConfigure() error {
 
 	if _, err := os.Stat(envPath); os.IsNotExist(err) {
 		if data, err := os.ReadFile(examplePath); err == nil {
-			os.WriteFile(envPath, data, 0o600)
+			if werr := os.WriteFile(envPath, data, 0o600); werr != nil {
+				p.emit(StepConfigure, KindWarn, "could not seed .env from the example: "+werr.Error())
+			}
 		}
 	}
 	f, err := envfile.Load(envPath)
@@ -319,7 +321,7 @@ func (p *Pipeline) writeViewMe(root string) error {
 	}
 	var b strings.Builder
 	b.WriteString("MuxCore — you're ready\n\n")
-	b.WriteString(fmt.Sprintf("  Admin UI:     http://localhost:8082\n                login: %s / %s\n", a.AdminUser, a.AdminPass))
+	fmt.Fprintf(&b, "  Admin UI:     http://localhost:8082\n                login: %s / %s\n", a.AdminUser, a.AdminPass)
 	if a.HasPlayback("MuxCore player") {
 		b.WriteString("  Player:       http://127.0.0.1:5173\n")
 	}
@@ -397,7 +399,7 @@ func (p *Pipeline) stepStart(ctx context.Context) error {
 			return err
 		}
 		if !prereqs.HaveDocker() {
-			msg := "Docker's daemon isn't reachable — start Docker (Docker Desktop, or `sudo systemctl start docker`) and try again"
+			msg := "the Docker daemon isn't reachable — start Docker (Docker Desktop, or `sudo systemctl start docker`) and try again"
 			p.emit(StepStart, KindError, msg)
 			return errors.New(msg)
 		}
@@ -419,7 +421,7 @@ func (p *Pipeline) stepStart(ctx context.Context) error {
 		if err := writeSystemdUnitFor(a.Root, false); err != nil {
 			p.emit(StepStart, KindWarn, err.Error())
 		} else {
-			execstream.Command(ctx, "systemd", a.Root, nil, sink, "systemctl", "--user", "daemon-reload")
+			_ = execstream.Command(ctx, "systemd", a.Root, nil, sink, "systemctl", "--user", "daemon-reload")
 			if err := execstream.Command(ctx, "systemd", a.Root, nil, sink, "systemctl", "--user", "enable", "--now", "muxcore.service"); err == nil {
 				p.emit(StepStart, KindDone, "")
 				return nil
@@ -430,7 +432,7 @@ func (p *Pipeline) stepStart(ctx context.Context) error {
 		if err := writeSystemdUnitFor(a.Root, true); err != nil {
 			p.emit(StepStart, KindWarn, err.Error())
 		} else {
-			execstream.Command(ctx, "systemd", a.Root, nil, sink, "sudo", "systemctl", "daemon-reload")
+			_ = execstream.Command(ctx, "systemd", a.Root, nil, sink, "sudo", "systemctl", "daemon-reload")
 			if err := execstream.Command(ctx, "systemd", a.Root, nil, sink, "sudo", "systemctl", "enable", "--now", "muxcore.service"); err == nil {
 				p.emit(StepStart, KindDone, "")
 				return nil
@@ -454,7 +456,7 @@ func (p *Pipeline) stepHealth(ctx context.Context) error {
 		resp, err := client.Get("http://127.0.0.1:8080/health")
 		if err == nil {
 			code := resp.StatusCode
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			if code == http.StatusOK {
 				p.emit(StepHealth, KindDone, "")
 				return nil
@@ -533,12 +535,14 @@ WantedBy=%s
 	if err != nil {
 		return err
 	}
-	defer os.Remove(tmp.Name())
+	defer func() { _ = os.Remove(tmp.Name()) }()
 	if _, err := tmp.WriteString(unitBody); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return err
 	}
-	tmp.Close()
+	if err := tmp.Close(); err != nil {
+		return err
+	}
 	cmd := exec.Command("sudo", "install", "-m", "0644", tmp.Name(), "/etc/systemd/system/muxcore.service")
 	return cmd.Run()
 }

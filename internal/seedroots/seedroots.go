@@ -33,7 +33,7 @@ func Seed(db string, roots []Root) error {
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	if _, err := conn.Exec(`PRAGMA journal_mode=WAL`); err != nil {
 		return err

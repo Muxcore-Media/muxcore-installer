@@ -5,10 +5,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
-
-	"github.com/Muxcore-Media/muxcore-installer/internal/prereqs"
 )
 
 func (m *Model) initPlayback() {
@@ -38,9 +35,8 @@ func (m *Model) updatePlayback(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	if m.playbackMenu.HandleKey(km) {
 		m.answers.Playback = m.playbackMenu.Selected()
-		if m.answers.HasPlayback("MuxCore player") && !prereqs.HaveFFmpeg() {
-			// Non-fatal: media-ffprobe/transcoder just run in a reduced mode.
-		}
+		// A missing ffmpeg is non-fatal: media-ffprobe/transcoder just run in a
+		// reduced mode, so there is nothing to check here.
 		m.credQueue = nil
 		for _, name := range []string{"Jellyfin", "Plex", "Emby"} {
 			if m.answers.HasPlayback(name) {
@@ -116,7 +112,7 @@ func probeServer(name, url, token string) (bool, string) {
 	if err != nil {
 		return false, err.Error()
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		return true, "connected"
 	}
@@ -161,7 +157,7 @@ func (m *Model) updatePlaybackCreds(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case "ctrl+t":
 		m.credChecking = true
 		m.credResult = ""
-		return m, tea.Batch(checkServerCmd(name, m.credURL.Value(), m.credTok.Value()), spinner.Tick)
+		return m, tea.Batch(checkServerCmd(name, m.credURL.Value(), m.credTok.Value()), m.credSpinner.Tick)
 	case "enter":
 		m.advanceCredQueue(name)
 		return m, nil

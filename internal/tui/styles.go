@@ -17,7 +17,6 @@ var (
 
 var (
 	styleTitle = lipgloss.NewStyle().Bold(true).Foreground(colAccent)
-	styleSub   = lipgloss.NewStyle().Foreground(colMuted)
 	styleHint  = lipgloss.NewStyle().Foreground(colDim).Italic(true)
 
 	styleStepBadge = lipgloss.NewStyle().
@@ -32,7 +31,6 @@ var (
 			Padding(1, 2)
 
 	styleBoxGood = styleBox.BorderForeground(colGood)
-	styleBoxBad  = styleBox.BorderForeground(colBad)
 
 	styleCursor   = lipgloss.NewStyle().Foreground(colAccent).Bold(true)
 	styleSelected = lipgloss.NewStyle().Foreground(colFg).Bold(true)
@@ -53,7 +51,6 @@ var (
 	styleLogLine       = lipgloss.NewStyle().Foreground(colMuted)
 	styleLogErr        = lipgloss.NewStyle().Foreground(colBad)
 	styleLogPane       = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(colDim)
-	styleTopPane       = lipgloss.NewStyle()
 	styleSpinner       = lipgloss.NewStyle().Foreground(colAccent)
 	styleChecklistDone = lipgloss.NewStyle().Foreground(colGood)
 	styleChecklistWait = lipgloss.NewStyle().Foreground(colDim)

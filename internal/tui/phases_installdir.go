@@ -42,7 +42,9 @@ func (m *Model) afterInstallDir() {
 	if err := pathutil.EnsureWritableDir(m.answers.Root); err != nil {
 		m.err = err
 	}
-	recordLegalAcceptance(m.answers.Root)
+	if err := recordLegalAcceptance(m.answers.Root); err != nil && m.err == nil {
+		m.err = err
+	}
 	envPath := filepath.Join(m.answers.Root, ".env")
 	if info, err := os.Stat(envPath); err == nil && !info.IsDir() {
 		m.answers.ExistingFound = true
@@ -157,8 +159,9 @@ func (m *Model) updateExistingChoice(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.initSummary()
 		case 2:
 			m.answers.ExistingChoice = "fresh"
-			os.RemoveAll(filepath.Join(m.answers.Root, "data"))
-			os.Remove(filepath.Join(m.answers.Root, ".env"))
+			// Best-effort wipe: a leftover file is simply overwritten by the new install.
+			_ = os.RemoveAll(filepath.Join(m.answers.Root, "data"))
+			_ = os.Remove(filepath.Join(m.answers.Root, ".env"))
 			m.initRuntimeKeep()
 		}
 	}

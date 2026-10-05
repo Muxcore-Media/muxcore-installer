@@ -230,12 +230,12 @@ func extractDistApp(tarball, destDir string) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	gz, err := gzip.NewReader(f)
 	if err != nil {
 		return err
 	}
-	defer gz.Close()
+	defer func() { _ = gz.Close() }()
 	tr := tar.NewReader(gz)
 	for {
 		hdr, err := tr.Next()
@@ -266,10 +266,12 @@ func extractDistApp(tarball, destDir string) error {
 				return err
 			}
 			if _, err := io.Copy(out, tr); err != nil {
-				out.Close()
+				_ = out.Close()
 				return err
 			}
-			out.Close()
+			if err := out.Close(); err != nil {
+				return err
+			}
 		}
 	}
 	if !indexExists(filepath.Join(destDir, "index.html")) {
@@ -327,12 +329,12 @@ func extractBinary(tarball, binDir, wantName string) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	gz, err := gzip.NewReader(f)
 	if err != nil {
 		return err
 	}
-	defer gz.Close()
+	defer func() { _ = gz.Close() }()
 	tr := tar.NewReader(gz)
 	var fallback string
 	for {
@@ -365,12 +367,12 @@ func extractBinary(tarball, binDir, wantName string) error {
 	if err != nil {
 		return err
 	}
-	defer f2.Close()
+	defer func() { _ = f2.Close() }()
 	gz2, err := gzip.NewReader(f2)
 	if err != nil {
 		return err
 	}
-	defer gz2.Close()
+	defer func() { _ = gz2.Close() }()
 	tr2 := tar.NewReader(gz2)
 	for {
 		hdr, err := tr2.Next()
@@ -394,11 +396,14 @@ func writeExecutable(r io.Reader, dest string) error {
 		return err
 	}
 	if _, err := io.Copy(out, r); err != nil {
-		out.Close()
-		os.Remove(tmp)
+		_ = out.Close()
+		_ = os.Remove(tmp)
 		return err
 	}
-	out.Close()
+	if err := out.Close(); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
 	return os.Rename(tmp, dest)
 }
 
