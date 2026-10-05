@@ -98,7 +98,7 @@ func (p *Pins) ModuleTag(name string) string {
 		if p.CoreTag != "" {
 			return p.CoreTag
 		}
-		return "v0.6.7"
+		return "v0.6.13"
 	}
 	if tag, ok := p.Modules[name]; ok {
 		return tag

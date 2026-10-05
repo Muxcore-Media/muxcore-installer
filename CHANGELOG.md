@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.9] - 2026-10-05
+
+
+### Changed
+
+- Release train train-2026.10.2 (core v0.6.13): pin matrix (`versions.env`, `PIN-MATRIX.md`) moves to core `v0.6.13` and the spool catalog `2.6.0` module tags; fallback core tag in `internal/pins/pins.go` and `lib/modules.sh` updated to `v0.6.13` (T-M2-04, FR-INS-006).
+
 ## [0.3.8] - 2026-10-05
 
 
